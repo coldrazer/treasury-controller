@@ -1,0 +1,9 @@
+{
+  "version": "demo-2026-10-18",
+  "note": "Fictitious entries for testing the screening hook. Not a sanctions list.",
+  "entries": [
+    {"name": "Blackwater Shell Trading Ltd", "aliases": ["Blackwater Shell Trading"]},
+    {"name": "Orion Front Holdings", "aliases": ["Orion Front Holding Co"]},
+    {"name": "Nimbus Proxy Exports LLC"}
+  ]
+}

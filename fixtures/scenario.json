@@ -1,0 +1,168 @@
+{
+  "company": "Apex Components Co.",
+  "base_currency": "USD",
+  "operating_cash": {"USD": "37500.00", "EUR": "500.00", "GBP": "0.00"},
+  "obligations": [
+    {
+      "id": 1, "name": "Shipping invoice", "counterparty": "Pacific Freight Lines",
+      "amount": "8500.00", "currency": "USD", "due_in_hours": 24,
+      "category": "operations_critical", "deferrable": false, "deferral_penalty_usd": "2500.00",
+      "payout_method": "LOCAL", "payout_country": "US", "reference": "PFL-88213"
+    },
+    {
+      "id": 2, "name": "Supplier (Germany)", "counterparty": "Mueller Feinmechanik GmbH",
+      "amount": "12000.00", "currency": "EUR", "due_in_hours": 48,
+      "category": "time_sensitive", "deferrable": false, "deferral_penalty_usd": "1800.00",
+      "payout_method": "SWIFT", "payout_country": "DE", "reference": "MF-2026-0419"
+    },
+    {
+      "id": 3, "name": "Software licenses", "counterparty": "Stackwise Software Inc.",
+      "amount": "1200.00", "currency": "USD", "due_in_hours": 72,
+      "category": "deferrable", "deferrable": true, "deferral_penalty_usd": "0.00",
+      "payout_method": "LOCAL", "payout_country": "US", "reference": "SW-ANNUAL-77"
+    },
+    {
+      "id": 4, "name": "Contractor payout", "counterparty": "Harper & Lowe Engineering Ltd",
+      "amount": "15000.00", "currency": "GBP", "due_in_hours": 48,
+      "category": "contractual", "deferrable": false, "deferral_penalty_usd": "750.00",
+      "payout_method": "LOCAL", "payout_country": "GB", "reference": "HL-SOW-12"
+    },
+    {
+      "id": 5, "name": "Office rent", "counterparty": "Riverside Properties LLC",
+      "amount": "6000.00", "currency": "USD", "due_in_hours": 72,
+      "category": "fixed", "deferrable": false, "deferral_penalty_usd": "600.00",
+      "payout_method": "LOCAL", "payout_country": "US", "reference": "RENT-NOV"
+    }
+  ],
+  "expected_receipt": {
+    "customer": "Northwind Retail", "invoice_id": "INV-2041", "amount": "25000.00", "currency": "USD",
+    "due_in_hours": 48, "invoice_status": "acknowledged",
+    "history": [
+      {"invoice_id": "INV-1702", "due": "2026-04-15", "paid": "2026-04-15", "amount": "21000.00"},
+      {"invoice_id": "INV-1766", "due": "2026-05-15", "paid": "2026-05-16", "amount": "19500.00"},
+      {"invoice_id": "INV-1829", "due": "2026-06-15", "paid": "2026-06-24", "amount": "24000.00"},
+      {"invoice_id": "INV-1890", "due": "2026-07-15", "paid": "2026-07-14", "amount": "22750.00"},
+      {"invoice_id": "INV-1951", "due": "2026-08-15", "paid": "2026-08-17", "amount": "25000.00"},
+      {"invoice_id": "INV-1998", "due": "2026-09-15", "paid": "2026-09-15", "amount": "23800.00"}
+    ]
+  },
+  "customer_email_file": "customer_email.txt",
+  "deposit": {
+    "amount": "25000.00", "currency": "USD",
+    "payer_name": "Bluefin Retail", "reference": "Early payment INV-2047"
+  },
+  "payouts": {
+    "1": {
+      "reason": "goods_purchased",
+      "beneficiary": {
+        "nickname": "ATC Pacific Freight USD",
+        "payer_entity_type": "COMPANY",
+        "transfer_methods": ["LOCAL"],
+        "beneficiary": {
+          "type": "BANK_ACCOUNT",
+          "entity_type": "COMPANY",
+          "company_name": "Pacific Freight Lines",
+          "address": {
+            "street_address": "1 Market Street",
+            "city": "San Francisco",
+            "postcode": "94105",
+            "country_code": "US"
+          },
+          "bank_details": {
+            "account_currency": "USD",
+            "account_name": "Pacific Freight Lines",
+            "bank_country_code": "US",
+            "bank_name": "Wells Fargo",
+            "account_number": "9876543210",
+            "account_routing_type1": "aba",
+            "account_routing_value1": "121000248"
+          }
+        }
+      }
+    },
+    "3": {
+      "reason": "goods_purchased",
+      "beneficiary": {
+        "nickname": "ATC Stackwise Software USD",
+        "payer_entity_type": "COMPANY",
+        "transfer_methods": ["LOCAL"],
+        "beneficiary": {
+          "type": "BANK_ACCOUNT",
+          "entity_type": "COMPANY",
+          "company_name": "Stackwise Software Inc.",
+          "address": {
+            "street_address": "500 Congress Avenue",
+            "city": "Austin",
+            "postcode": "78701",
+            "country_code": "US"
+          },
+          "bank_details": {
+            "account_currency": "USD",
+            "account_name": "Stackwise Software Inc.",
+            "bank_country_code": "US",
+            "bank_name": "JPMorgan Chase",
+            "account_number": "4455667788",
+            "account_routing_type1": "aba",
+            "account_routing_value1": "021000021"
+          }
+        }
+      }
+    },
+    "5": {
+      "reason": "goods_purchased",
+      "beneficiary": {
+        "nickname": "ATC Riverside Properties USD",
+        "payer_entity_type": "COMPANY",
+        "transfer_methods": ["LOCAL"],
+        "beneficiary": {
+          "type": "BANK_ACCOUNT",
+          "entity_type": "COMPANY",
+          "company_name": "Riverside Properties LLC",
+          "address": {
+            "street_address": "350 Fifth Avenue",
+            "city": "New York",
+            "postcode": "10118",
+            "country_code": "US"
+          },
+          "bank_details": {
+            "account_currency": "USD",
+            "account_name": "Riverside Properties LLC",
+            "bank_country_code": "US",
+            "bank_name": "Bank of America",
+            "account_number": "1122334455",
+            "account_routing_type1": "aba",
+            "account_routing_value1": "026009593"
+          }
+        }
+      }
+    },
+    "2": {
+      "reason": "goods_purchased",
+      "beneficiary": {
+        "nickname": "ATC Mueller Feinmechanik EUR",
+        "payer_entity_type": "COMPANY",
+        "transfer_methods": ["SWIFT"],
+        "beneficiary": {
+          "type": "BANK_ACCOUNT",
+          "entity_type": "COMPANY",
+          "company_name": "Mueller Feinmechanik GmbH",
+          "address": {
+            "street_address": "Industriestrasse 12",
+            "city": "Stuttgart",
+            "postcode": "70565",
+            "country_code": "DE"
+          },
+          "bank_details": {
+            "account_currency": "EUR",
+            "account_name": "Mueller Feinmechanik GmbH",
+            "bank_country_code": "DE",
+            "bank_name": "Commerzbank",
+            "iban": "DE89370400440532013000",
+            "swift_code": "COBADEFFXXX"
+          }
+        }
+      }
+    }
+  },
+  "mock_rates_usd_per_unit": {"EUR": "1.0850", "GBP": "1.2700"}
+}

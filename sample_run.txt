@@ -1,0 +1,297 @@
+$ python3 demo.py --mock --yes
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ADAPTIVE TREASURY CONTROLLER  ·  Apex Components Co.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Five bills fall due in 72 hours across USD, EUR and GBP. Cash above a USD 10,000.00 reserve floor
+  covers only part of them. The agent must choose what to fund, what to convert, what to defer and
+  what a human must decide — and adapt when the evidence or the balance changes.
+  Running against offline mock sandbox at http://127.0.0.1:54926 · model: none (deterministic reader) · cycle 20261023T100031Z-befcf3
+  Operator demo.operator · audit DB 20261023T100031Z-befcf3.db (HMAC-chained) · screening demo-2026-10-18
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ACT 1 — INITIAL TRIAGE  ·  read balances, list obligations, plan with reasons
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Balances (GET /balances/current)
+    USD 37,500.00   EUR 500.00   GBP 0.00
+    Indicative rates (GET /fx/rates/current, planning only): 1 EUR ≈ 1.085000 USD, 1 GBP ≈ 1.270000 USD
+
+Receipt forecast · Northwind Retail INV-2041 USD 25,000.00, due in 48h
+    Bank history: 5/6 past Northwind Retail receipts landed within 3 days of due (score 0.83).
+    Invoice INV-2041: status 'acknowledged' (score 1.00).
+    Both sources agree the receipt is coming.
+    Confidence 0.92 → autonomous conversion limit USD 15,000.00
+
+Obligations · next 72 hours
+    #  Obligation            Counterparty                              Amount   Due         ≈ USD
+    1  Shipping invoice      Pacific Freight Lines               USD 8,500.00   24h      8,500.00
+    2  Supplier (Germany)    Mueller Feinmechanik GmbH          EUR 12,000.00   48h     13,033.94
+    3  Software licenses     Stackwise Software Inc.             USD 1,200.00   72h      1,200.00
+    4  Contractor payout     Harper & Lowe Engineering Ltd      GBP 15,000.00   48h     19,050.00
+    5  Office rent           Riverside Properties LLC            USD 6,000.00   72h      6,000.00
+    Needs ≈ USD 47,783.94 incl. payout fees; cash above the floor ≈ USD 28,042.50 → covers 59%.
+
+Plan in priority order (policy.py rules; each decision with its reason)
+  #1  FUND      Shipping invoice        USD 8,500.00   [funded] R1_FUND_OPERATIONS_CRITICAL
+        ↳ Non-payment stops operations; funded first from USD above the floor. Headroom left USD
+        19,000.00.
+  #5  FUND      Office rent             USD 6,000.00   [funded] R2_FUND_FIXED
+        ↳ Fixed and non-negotiable; funded from USD above the floor. Headroom left USD 13,000.00.
+  #2  CONVERT   Supplier (Germany)     EUR 12,000.00   [fx_planned] R3_CONVERT_MINIMUM
+        ↳ Time-sensitive EUR payment. Converts the minimum: EUR 12,000.00 + EUR 12.85 SWIFT fee −
+        EUR 500.00 already held = buy EUR 11,512.85 (≈ USD 12,491.45). Within autonomous limit USD
+        15,000.00 at forecast confidence 0.92.
+  #4  ESCALATE  Contractor payout      GBP 15,000.00   [escalated] R5_ESCALATE_THRESHOLD
+        ↳ USD 19,050.00 equivalent exceeds the USD 15,000.00 single-payment threshold; routed to a
+        human. The agent will not split it to fit under the limit. Funding: not coverable above the
+        floor (gap USD 18,541.45).
+  #3  DEFER     Software licenses       USD 1,200.00   [deferred] R4_DEFER_CHEAPEST
+        ↳ Plan is USD 691.45 short above the reserve floor. Deferral penalty is USD 0.00, the
+        cheapest obligation to defer; pushed 7 days to next week.
+
+══════════════════ RESERVE FLOOR USD 10,000.00 · hard line, never planned through ══════════════════
+    ██████████████████████████████████████████████████████████████████████████████████████░░
+    ■ committed 26,991.45   ■ floor 10,000.00   ■ free headroom 508.55
+
+Escalated to a human: #4 Contractor payout
+    ┌────────────────────────────────────────────────────────────────────────────────────────────
+    │ APPROVAL REQUIRED · POLICY_EXCEPTION · apr_3f4eac7db306 · code B8431A47
+    │ Action       PAYOUT
+    │ Amount       GBP 15,000.00
+    │ Counterparty Harper & Lowe Engineering Ltd
+    │ Requested by demo.operator
+    │ Expires      2026-10-24 10:00 UTC
+    │ Evidence
+    │   • Obligation #4 Contractor payout: GBP 15,000.00 to Harper & Lowe Engineering Ltd, due
+    │     in 48h.
+    │   • Rule R5_ESCALATE_THRESHOLD: USD 19,050.00 equivalent vs USD 15,000.00 single-payment
+    │     threshold.
+    │   • Funding gap above the floor: USD 18,541.45.
+    │ Note for approver
+    │   Decide on paying GBP 15,000.00 to Harper & Lowe Engineering Ltd (Contractor payout),
+    │   due in 48h. USD 19,050.00 equivalent exceeds the USD 15,000.00 single-payment
+    │   threshold; routed to a human. The agent will not split it to fit under the limit.
+    │   Funding: not coverable above the floor (gap USD 18,541.45).
+    └────────────────────────────────────────────────────────────────────────────────────────────
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ACT 2 — CONFIDENCE DROP  ·  a customer email contradicts the receipt forecast
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Inbound email
+    │ From: Dana Whitfield <ap@northwind-retail.example>
+    │ Subject: INV-2041 - payment timing
+    │ 
+    │ Hi Apex team,
+    │ 
+    │ Quick heads-up from Northwind Retail accounts payable. Our quarter-end payment run slipped, so payment for INV-2041 (USD 25,000) will be delayed 2 weeks. We now expect to release it around November 2.
+    │ 
+    │ Sorry for the inconvenience,
+    │ Dana Whitfield
+    │ Accounts Payable, Northwind Retail
+
+Structured signal (read by rules)
+    stance=delay  invoice=INV-2041  delay_days=14  new_date=November 2
+    evidence: "Our quarter-end payment run slipped, so payment for INV-2041 (USD 25,000) will be
+    delayed 2 weeks."
+    The model only extracts this signal. Code below decides what it means.
+
+Forecast → limit (forecast.py + policy.py)
+    Customer reports a 14-day delay, pushing the receipt past the 72h planning window; confidence
+    x0.40.
+                                  before         after
+    Forecast confidence             0.92          0.37
+    Autonomous FX limit        15,000.00      2,500.00
+
+Approval gate: #2 Supplier (Germany) — same action, now needs a human
+  #2  CONVERT   Supplier (Germany)     EUR 12,000.00   [awaiting_approval] R3_CONVERT_MINIMUM
+        ↳ Time-sensitive EUR payment. Converts the minimum: EUR 12,000.00 + EUR 12.85 SWIFT fee −
+        EUR 500.00 already held = buy EUR 11,512.85 (≈ USD 12,491.45). Within autonomous limit USD
+        15,000.00 at forecast confidence 0.92.
+        ↳ R7: conversion ≈ USD 12,491.45 now exceeds the autonomous limit USD 2,500.00 (confidence
+        0.92 → 0.37); the same action now needs a human.
+    ┌────────────────────────────────────────────────────────────────────────────────────────────
+    │ APPROVAL REQUIRED · FX_CONVERSION · apr_71ea93b50212 · code 721676BF
+    │ Action       CONVERT
+    │ Amount       EUR 11,512.85
+    │ Counterparty Mueller Feinmechanik GmbH
+    │ Destination  IBAN ****3000 · BIC COBADEFFXXX · EUR
+    │ Pay with     USD, at most USD 12,553.91
+    │ Requested by demo.operator
+    │ Expires      2026-10-24 10:00 UTC
+    │ Evidence
+    │   • Obligation #2 Supplier (Germany): EUR 12,000.00 to Mueller Feinmechanik GmbH, due in
+    │     48h.
+    │   • Pays to IBAN ****3000 · BIC COBADEFFXXX · EUR (account fingerprint 6e65efcd6b17).
+    │   • Minimum conversion: buy EUR 11,512.85 (incl. EUR 12.85 SWIFT fee, less EUR 500.00
+    │     held), ≈ USD 12,491.45.
+    │   • Forecast confidence 0.37 → autonomous limit USD 2,500.00.
+    │   • Customer email (Northwind Retail): "Our quarter-end payment run slipped, so payment
+    │     for INV-2041 (USD 25,000) will be delayed 2 weeks."
+    │   • Confidence 0.92 → 0.37; limit USD 15,000.00 → USD 2,500.00.
+    │ Note for approver
+    │   Approve converting EUR 11,512.85 (≈ USD 12,491.45, max USD 12,553.91) to pay Mueller
+    │   Feinmechanik GmbH. The conversion needs a human: autonomous limit USD 2,500.00 at
+    │   forecast confidence 0.37. Customer reports a 14-day delay, pushing the receipt past
+    │   the 72h planning window; confidence x0.40.
+    └────────────────────────────────────────────────────────────────────────────────────────────
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ACT 3 — DEPOSIT ARRIVES  ·  USD 25,000.00 mid-cycle
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Sandbox: POST /simulation/deposit/create (simulation.py)
+    Bluefin Retail · Early payment INV-2047 · response status PENDING (posts immediately; the agent re-reads balances before recalculating)
+
+Recalculation event (not a rerun)
+    Headroom above the floor: 508.55 → 25,508.55 after the deposit
+    Affected (cash-constrained): #3, #4    Untouched: #1, #2, #5
+
+    #3 Software licenses: DEFER [deferred] → FUND [funded]
+        before: Plan is USD 691.45 short above the reserve floor. Deferral penalty is USD 0.00, the
+        cheapest obligation to defer; pushed 7 days to next week.
+        after:  Fits within headroom after higher-priority items; funded from USD above the floor.
+        Headroom left USD 24,308.55.
+
+    #4 Contractor payout: ESCALATE [escalated] → ESCALATE [escalated]
+        before: USD 19,050.00 equivalent exceeds the USD 15,000.00 single-payment threshold; routed
+        to a human. The agent will not split it to fit under the limit. Funding: not coverable above
+        the floor (gap USD 18,541.45).
+        after:  USD 19,050.00 equivalent exceeds the USD 15,000.00 single-payment threshold; routed
+        to a human. The agent will not split it to fit under the limit. Funding: fully coverable;
+        USD 19,050.00 held pending approval.
+        approval apr_3f4eac7db306 superseded: its evidence changed
+    ┌────────────────────────────────────────────────────────────────────────────────────────────
+    │ APPROVAL REQUIRED · POLICY_EXCEPTION · apr_23ad1bcf7ff6 · code 5C5B6A83
+    │ Action       PAYOUT
+    │ Amount       GBP 15,000.00
+    │ Counterparty Harper & Lowe Engineering Ltd
+    │ Requested by demo.operator
+    │ Expires      2026-10-24 10:00 UTC
+    │ Evidence
+    │   • Obligation #4 Contractor payout: GBP 15,000.00 to Harper & Lowe Engineering Ltd, due
+    │     in 48h.
+    │   • Rule R5_ESCALATE_THRESHOLD: USD 19,050.00 equivalent vs USD 15,000.00 single-payment
+    │     threshold.
+    │   • Funding: USD 19,050.00 held pending approval.
+    │ Note for approver
+    │   Decide on paying GBP 15,000.00 to Harper & Lowe Engineering Ltd (Contractor payout),
+    │   due in 48h. USD 19,050.00 equivalent exceeds the USD 15,000.00 single-payment
+    │   threshold; routed to a human. The agent will not split it to fit under the limit.
+    │   Funding: fully coverable; USD 19,050.00 held pending approval.
+    └────────────────────────────────────────────────────────────────────────────────────────────
+
+══════════════════ RESERVE FLOOR USD 10,000.00 · hard line, never planned through ══════════════════
+    ████████████████████████████████████████████████████████████████████████████████░░░░░░░░
+    ■ committed 47,241.45   ■ floor 10,000.00   ■ free headroom 5,258.55
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ACT 4 — EXECUTION  ·  bound approval → one quote → conversion (REST) → beneficiary → transfer
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Human approval for #2
+    ┌────────────────────────────────────────────────────────────────────────────────────────────
+    │ APPROVAL REQUIRED · FX_CONVERSION · apr_71ea93b50212 · code 721676BF
+    │ Action       CONVERT
+    │ Amount       EUR 11,512.85
+    │ Counterparty Mueller Feinmechanik GmbH
+    │ Destination  IBAN ****3000 · BIC COBADEFFXXX · EUR
+    │ Pay with     USD, at most USD 12,553.91
+    │ Requested by demo.operator
+    │ Expires      2026-10-24 10:00 UTC
+    │ Evidence
+    │   • Obligation #2 Supplier (Germany): EUR 12,000.00 to Mueller Feinmechanik GmbH, due in
+    │     48h.
+    │   • Pays to IBAN ****3000 · BIC COBADEFFXXX · EUR (account fingerprint 6e65efcd6b17).
+    │   • Minimum conversion: buy EUR 11,512.85 (incl. EUR 12.85 SWIFT fee, less EUR 500.00
+    │     held), ≈ USD 12,491.45.
+    │   • Forecast confidence 0.37 → autonomous limit USD 2,500.00.
+    │   • Customer email (Northwind Retail): "Our quarter-end payment run slipped, so payment
+    │     for INV-2041 (USD 25,000) will be delayed 2 weeks."
+    │   • Confidence 0.92 → 0.37; limit USD 15,000.00 → USD 2,500.00.
+    │ Note for approver
+    │   Approve converting EUR 11,512.85 (≈ USD 12,491.45, max USD 12,553.91) to pay Mueller
+    │   Feinmechanik GmbH. The conversion needs a human: autonomous limit USD 2,500.00 at
+    │   forecast confidence 0.37. Customer reports a 14-day delay, pushing the receipt past
+    │   the 72h planning window; confidence x0.40.
+    └────────────────────────────────────────────────────────────────────────────────────────────
+    sam.treasury signs in with their PIN, reviews the card and types code 721676BF (--yes: unattended approver)
+    ✓ Approved by sam.treasury. Bound to EUR 11,512.85 → Mueller Feinmechanik GmbH at IBAN ****3000 · BIC COBADEFFXXX · EUR; single use.
+
+#2 Supplier (Germany)
+    1. Quote   POST /fx/quotes/create  → e07f25f7-52a0-4cde-b2d0-67fa2b52ea14  buy EUR 11,512.85 for USD 12,491.44 (single use, no x-api-version)
+    2. Convert POST /fx/conversions/create → 11cf36d6-1673-4e11-9dff-883bbcf9b93b  status SETTLED  rate 1.0850
+    3. Payee   POST /beneficiaries/create   → 845f8b3b-d347-40c1-be4d-23b630f22831 (schema-checked: DE · EUR · SWIFT)
+    4. Pay     POST /transfers/create       → 94df0752-51d7-4fe7-9dac-60eff12c6cbb  EUR 12,000.00 + fee EUR 12.85  status PROCESSING
+       transfer status → SENT (in flight, not final)
+       transfer status → PAID (terminal)
+
+Reserve confirmation (balances re-read and reconciled)
+    Airwallex now: USD 50,008.56   EUR 0.00   GBP 0.00
+    Ledger book:   USD 50,008.56   EUR 0.00   GBP 0.00
+    USD committed 34,750.00 (funded 15,700.00, held_pending_approval 19,050.00)
+    USD uncommitted 15,258.56 vs floor 10,000.00 → FLOOR INTACT · headroom 5,258.56
+══════════════════ RESERVE FLOOR USD 10,000.00 · hard line, never planned through ══════════════════
+    ██████████████████████████████████████████████████████████████████████████████░░░░░░░░░░
+    ■ committed 34,750.00   ■ floor 10,000.00   ■ free headroom 5,258.56
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ CLOSE  ·  starting balance → decisions → deposit → final balance
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Start      USD 37,500.00   EUR 500.00   GBP 0.00
+  Decisions
+    #1 Shipping invoice        USD 8,500.00  pending → funded   (R1_FUND_OPERATIONS_CRITICAL)
+    #5 Office rent             USD 6,000.00  pending → funded   (R2_FUND_FIXED)
+    #2 Supplier (Germany)     EUR 12,000.00  pending → fx_planned → awaiting_approval → converted → paid   (PAYOUT_SETTLED)
+    #4 Contractor payout      GBP 15,000.00  pending → escalated → escalated   (R5_ESCALATE_THRESHOLD)
+    #3 Software licenses       USD 1,200.00  pending → deferred → funded   (R2_FUND)
+  Deposit    +USD 25,000.00 from Bluefin Retail → recalculated only the cash-constrained decisions
+  Final      USD 50,008.56   EUR 0.00   GBP 0.00
+  Reserve    USD 15,258.56 uncommitted ≥ floor 10,000.00: INTACT   (ledger reconciled with Airwallex: yes)
+  Waiting on a human: #4 GBP 15,000.00 → Harper & Lowe Engineering Ltd (code 5C5B6A83)
+
+Audit log · every action with its reason
+  setup  #2  payee_pinned        [seed:mock-demo] Mueller Feinmechanik GmbH pinned to IBAN [...]
+  act1   #1  state               Non-payment stops operations; funded first from USD above [...]
+  act1   #5  state               Fixed and non-negotiable; funded from USD above the floor. [...]
+  act1   #2  state               Time-sensitive EUR payment. Converts the minimum: EUR [...]
+  act1   #4  state               USD 19,050.00 equivalent exceeds the USD 15,000.00 single- [...]
+  act1   #4  approval_requested  Decide on paying GBP 15,000.00 to Harper & Lowe Engineering [...]
+  act1   #3  state               Plan is USD 691.45 short above the reserve floor. Deferral [...]
+  act2       email_read          Customer email read by rules: stance=delay.
+  act2       confidence          Customer reports a 14-day delay, pushing the receipt past [...]
+  act2   #2  state               R7: conversion ≈ USD 12,491.45 now exceeds the autonomous [...]
+  act2   #2  approval_requested  Approve converting EUR 11,512.85 (≈ USD 12,491.45, max USD [...]
+  act3       deposit_confirmed   Inflow USD 25,000.00 confirmed on Airwallex (Early payment [...]
+  act3   #4  state               USD 19,050.00 equivalent exceeds the USD 15,000.00 single- [...]
+  act3   #4  approval_requested  Decide on paying GBP 15,000.00 to Harper & Lowe Engineering [...]
+  act3   #3  state               Fits within headroom after higher-priority items; funded [...]
+  act3       recalculated        Recalculated #4, #3; untouched #1, #5, #2.
+  act4   #2  approval_granted    [approver:sam.treasury] Sam Ortiz (Treasury) (sam.treasury) [...]
+  act4   #2  fx_quote            Locked single-use quote [...]
+  act4   #2  state               Converted the minimum over REST: sold USD 12,491.44, bought [...]
+  act4   #2  beneficiary_created Created beneficiary 845f8b3b-d347-40c1-be4d-23b630f22831 for [...]
+  act4   #2  payout_sent         Transfer 94df0752-51d7-4fe7-9dac-60eff12c6cbb for EUR [...]
+  act4   #2  payout_status       Transfer 94df0752-51d7-4fe7-9dac-60eff12c6cbb: PROCESSING → SENT.
+  act4   #2  payout_status       Transfer 94df0752-51d7-4fe7-9dac-60eff12c6cbb: SENT → PAID.
+  act4   #2  state               Transfer 94df0752-51d7-4fe7-9dac-60eff12c6cbb reached PAID.
+  act4       reserve_confirmed   USD 15,258.56 uncommitted vs floor 10,000.00: intact.
+
+Audit database
+    state/mock/20261023T100031Z-befcf3.db  ·  54 entries  ·  chain hmac-sha256  ·  VERIFIED
+    head f1263e5172d5b708…  (append-only: triggers refuse UPDATE/DELETE; re-check with: python manage.py verify-audit)
+
+$ python3 manage.py --db state/mock/20261023T100031Z-befcf3.db verify-audit
+database   state/mock/20261023T100031Z-befcf3.db
+chain      hmac-sha256  ·  54 entries  ·  head f1263e5172d5b708d6257730bcede92ca386d245d68174f0b119c5085011c1e6
+result     OK: integrity, protective triggers, hash chain, approval digests
+
+$ python3 manage.py --db state/mock/20261023T100031Z-befcf3.db list-payouts
+error: --by <approver id> is required: reading or copying ledger data is authenticated and audited
+exit=2 (reading the ledger is an audited action: --by is required)
+
+$ python3 manage.py --db state/mock/20261023T100031Z-befcf3.db list-payouts --by dana.controller
+e176367c-dbf0-4d7a-8d17-d8731dc3e0cc  paid       #2  EUR     12000.00  ref MF-2026-0419     cycle 20261023T100031Z-befcf3  transfer 94df0752-51d7-4fe7-9dac-60eff12c6cbb  
+exit=0

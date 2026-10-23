@@ -1,0 +1,10 @@
+From: Dana Whitfield <ap@northwind-retail.example>
+Subject: INV-2041 - payment timing
+
+Hi Apex team,
+
+Quick heads-up from Northwind Retail accounts payable. Our quarter-end payment run slipped, so payment for INV-2041 (USD 25,000) will be delayed 2 weeks. We now expect to release it around November 2.
+
+Sorry for the inconvenience,
+Dana Whitfield
+Accounts Payable, Northwind Retail

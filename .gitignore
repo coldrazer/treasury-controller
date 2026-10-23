@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+state/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.db
+*.db-wal
+*.db-shm
+*.db.lock
+*.key
+audit-export/
+anchors.jsonl

@@ -217,6 +217,17 @@ def account_fields(bank: Mapping) -> dict:
     return fields
 
 
+def account_fields_match(actual: Mapping, spec: Mapping) -> bool:
+    """Compare a live beneficiary record against the approved spec. Airwallex
+    omits swift_code from returned records, so a missing swift_code matches;
+    a present-but-different swift_code still fails."""
+    a, b = account_fields(actual), account_fields(spec)
+    if not a.get("swift_code"):
+        a.pop("swift_code", None)
+        b.pop("swift_code", None)
+    return a == b
+
+
 def masked_account(fields: Mapping) -> str:
     acct = fields["iban"] or fields["account_number"]
     text = ("IBAN " if fields["iban"] else "Acct ") + mask(acct)
@@ -1048,7 +1059,7 @@ class TreasuryAgent:
         bank = spec["beneficiary"]["bank_details"]
         for item in self.client.find_beneficiaries(nick_name=spec["nickname"]):
             details = (item.get("beneficiary") or {}).get("bank_details") or {}
-            if account_fields(details) == account_fields(bank):
+            if account_fields_match(details, bank):
                 return item
         return None
 
@@ -1079,7 +1090,7 @@ class TreasuryAgent:
         candidates = self.client.find_beneficiaries(nick_name=spec["nickname"])
         actual = next((item for item in candidates if item.get("id") == beneficiary_id), None)
         details = ((actual or {}).get("beneficiary") or {}).get("bank_details") or {}
-        if actual is None or account_fields(details) != account_fields(spec["beneficiary"]["bank_details"]):
+        if actual is None or not account_fields_match(details, spec["beneficiary"]["bank_details"]):
             self._halt(f"beneficiary {beneficiary_id} no longer matches the approved destination")
         return beneficiary_id
 

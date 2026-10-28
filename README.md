@@ -99,9 +99,10 @@ decisions are identical either way, because the model never makes them.
   for USD 12,491.44, no `x-api-version`), the conversion over REST, a schema-checked DE · EUR · SWIFT
   beneficiary, and a EUR 12,000 transfer (payer pays 12,012.85). SENT is treated as in flight; PAID is
   terminal.
-* **Close.** Final USD 50,008.56 · EUR 0.00 — exactly the minimum was converted. USD committed 34,750
-  (funded 15,700 + held 19,050) → USD 15,258.56 uncommitted ≥ the 10,000 floor. The contractor payout is
-  still waiting on a human. Every action is in the audit log with its rule and reason.
+* **Close.** Final USD 34,308.56 · EUR 0.00 — exactly the minimum was converted. USD committed 19,050
+  (held, #4) → USD 15,258.56 uncommitted ≥ the 10,000 floor. #1, #3 and #5 paid; #2 converted and paid;
+  the contractor payout is still waiting on a human. Every action is in the audit log with its rule
+  and reason.
 
 ## Architecture
 
@@ -140,7 +141,9 @@ pending ─┬─► funded ─────────────────�
   awaiting_approval ──(approver rejects)──► escalated        converted ──(payout failed)──► escalated
 ```
 
-`funded` ring-fences cash for the payment; `converted` means FX is booked and the payout is in flight.
+`funded` ring-fences cash for the payment; within the autonomous payout cap the payment then moves
+without a card, above it a payout-cap card gates it. `converted` means FX is booked and the payout
+is in flight.
 Deposits arrive as a recalculation *event*; triage never reruns.
 
 ### Design rules and how the code enforces them
@@ -180,9 +183,7 @@ Deposits arrive as a recalculation *event*; triage never reruns.
 
 ## Security and compliance
 
-`AUDIT_REPORT.md` is the full security and regulatory-controls audit: findings and fixes, the control
-matrix (SOC 2, ISO 27001, SOX ITGC, GLBA, GDPR, BSA/OFAC), the tests behind each control and the
-residual items that need an owner outside the code. In short:
+The controls below are enforced by the code and covered by the test suite. In short:
 
 * **Database.** Append-only audit log, HMAC-SHA256 hash-chained with a key held outside the database;
   triggers refuse UPDATE/DELETE on every record table; approval terms, payout terms and completed
@@ -225,8 +226,10 @@ residual items that need an owner outside the code. In short:
 * **Beneficiary schema path.** The spec names `POST /beneficiaries/schema`; the current API reference
   documents `POST /beneficiary_api_schemas/generate`. The client calls the documented path and falls
   back to the spec's path on 404.
-* **"Fund" ring-fences cash** for the USD obligations; per the scenario, the only money movements are
-  the one FX conversion and the one supplier transfer.
+* **"Fund" ring-fences cash** for the USD obligations and then pays them under the autonomous payout
+  cap, which is tiered by confidence like the FX cap: within the cap the transfer moves on its own
+  (here #3), above it a payout-cap card gates it (#1 and #5 after a human signs). Per the scenario,
+  the run's money movements are the one FX conversion and three supplier transfers.
 * **Two extra states**, `awaiting_approval` and `paid`, make the approval gate and payout finality explicit.
 * **The deposit** comes from a different customer (Bluefin Retail), so Northwind's delayed receipt — and
   the low confidence — still stand after Act 3.
@@ -238,6 +241,6 @@ residual items that need an owner outside the code. In short:
   reuse, error codes, header rules). It is a test double; run `smoke_live.py` and `demo.py --live` to
   verify against the real sandbox, which this build has not yet been run against.
 
-## Video
+## License
 
-`VIDEO_SCRIPT.md` has a beat-by-beat script for the under-5-minute walkthrough.
+MIT — see [LICENSE](LICENSE). Copyright 2026 Apex Studio LLC.

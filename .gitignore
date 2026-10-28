@@ -6,6 +6,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
+*.venv/
+macOS.venv/
+__MACOSX/
+.DS_Store
+.coverage
 *.db
 *.db-wal
 *.db-shm
@@ -13,3 +18,6 @@ __pycache__/
 *.key
 audit-export/
 anchors.jsonl
+# Ship a submission from git (git archive HEAD) so only tracked files leave the
+# machine: no venv, no state directory, no caches, no OS metadata. The patterns
+# above keep a gitignore-respecting zip clean too.

@@ -59,7 +59,12 @@ SENSITIVE_KEYS = frozenset({
     "iban", "account_number", "account_routing_value1", "account_routing_value2", "card", "number", "token",
     "personal_id_number", "legal_rep_id_number", "legal_rep_bank_account_number", "date_of_birth",
     "personal_email", "personal_mobile_number", "binding_mobile_number", "legal_rep_mobile_number",
-    "business_phone_number", "fingerprint", "api_key", "x-api-key", "authorization", "password", "pin",
+    "business_phone_number", "api_key", "x-api-key", "authorization", "password", "pin",
+    # NOTE: "fingerprint" is deliberately NOT sensitive. A payee fingerprint is a keyed
+    # HMAC identifier, not the account itself: it cannot be brute-forced back into bank
+    # details, it is already shown truncated in approval evidence and stored in full in
+    # payee_history, and the audit event for a pin change is only reconstructable if it
+    # carries both fingerprints in full.
 })
 
 
@@ -410,6 +415,23 @@ CREATE TABLE snapshots (
 );
 CREATE TRIGGER snapshots_frozen BEFORE UPDATE ON snapshots BEGIN SELECT RAISE(ABORT, 'snapshots are append-only'); END;
 CREATE TRIGGER snapshots_no_delete BEFORE DELETE ON snapshots BEGIN SELECT RAISE(ABORT, 'snapshots are append-only'); END;
+CREATE TABLE deferrals (
+  cycle_id TEXT NOT NULL REFERENCES cycles(cycle_id),
+  obligation_id INTEGER NOT NULL,
+  deferred_until TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (cycle_id, obligation_id)
+);
+CREATE TABLE cycle_state (
+  cycle_id TEXT PRIMARY KEY REFERENCES cycles(cycle_id),
+  autonomous_executed TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE payout_state (
+  cycle_id TEXT PRIMARY KEY REFERENCES cycles(cycle_id),
+  autonomous_paid TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 """
 if f"'{GENESIS}'" not in SCHEMA:  # the chain-link trigger and the code must agree on the genesis hash
     raise ImportError("schema genesis hash mismatch")
@@ -420,11 +442,16 @@ EXPECTED_TRIGGERS = frozenset(
 # Rows that bind money (a payout reservation, an idempotent bank operation) hold no approval
 # digest, so each of their states is signed into the audit chain the way approver state is.
 ROW_STATE_VERSION = "1"
-STATE_TABLES = ("operations", "payouts")
+STATE_TABLES = ("operations", "payouts", "approvals", "payees", "payee_history")
 _STATE_EVENTS = frozenset(f"{table}_state" for table in STATE_TABLES)
 _ROW_BY_KEY = {"payouts": "SELECT * FROM payouts WHERE request_id = ?",
-               "operations": "SELECT * FROM operations WHERE cycle_id = ? AND op_key = ?"}
-_ROW_ALL = {"payouts": "SELECT * FROM payouts", "operations": "SELECT * FROM operations"}
+               "operations": "SELECT * FROM operations WHERE cycle_id = ? AND op_key = ?",
+               "approvals": "SELECT * FROM approvals WHERE id = ?",
+               "payees": "SELECT * FROM payees WHERE payee_key = ?",
+               "payee_history": "SELECT * FROM payee_history WHERE payee_key = ? AND id = ?"}
+_ROW_ALL = {"payouts": "SELECT * FROM payouts", "operations": "SELECT * FROM operations",
+            "approvals": "SELECT * FROM approvals", "payees": "SELECT * FROM payees",
+            "payee_history": "SELECT * FROM payee_history"}
 
 # The payout guard used to key on the amount as well, so paying an invoice for a different figure was
 # a second live payout rather than a duplicate. The tightened guard is recognised on an existing
@@ -575,6 +602,15 @@ class Store:
         if version != SCHEMA_VERSION:
             raise StoreError(f"database schema {version} is not supported (expected {SCHEMA_VERSION})")
         self._retighten_payout_index()
+        self._ensure_resume_tables()
+
+    def _ensure_resume_tables(self) -> None:
+        """Item 03 tables are purely additive: an older ledger gains them on open, using the
+        exact DDL the schema check expects, so verification keeps passing on existing databases."""
+        for name in ("deferrals", "cycle_state", "payout_state"):
+            if not self.conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone():
+                self.conn.execute(SCHEMA_STATEMENTS[name])
 
     def _retighten_payout_index(self) -> None:
         """Re-create the payout guard from the current schema when the ledger still holds the known
@@ -673,15 +709,25 @@ class Store:
 
     @staticmethod
     def _row_state_key(table: str, row) -> str:
-        return row["request_id"] if table == "payouts" else f"{row['cycle_id']}|{row['op_key']}"
+        if table == "payouts":
+            return row["request_id"]
+        if table == "operations":
+            return f"{row['cycle_id']}|{row['op_key']}"
+        if table == "approvals":
+            return row["id"]
+        if table == "payees":
+            return row["payee_key"]
+        return f"{row['payee_key']}|{row['id']}"
 
-    def _stamp_row(self, c, table: str, *key_params) -> None:
-        """Sign the row's post-write state into the audit chain, inside the caller's transaction."""
+    def _stamp_row(self, c, table: str, *key_params, cycle_id: str | None = None) -> None:
+        """Sign the row's post-write state into the audit chain, inside the caller's transaction.
+        Payee rows carry no cycle, so their writers pass the cycle the change was filed under."""
         row = c.execute(_ROW_BY_KEY[table], key_params).fetchone()
         if row is None:
             raise StoreError(f"{table} row {'|'.join(map(str, key_params))} is missing")
         key = self._row_state_key(table, row)
-        self._append_audit(c, cycle_id=row["cycle_id"], act="ledger", actor="identity-store",
+        self._append_audit(c, cycle_id=cycle_id if cycle_id is not None else row["cycle_id"],
+                           act="ledger", actor="identity-store",
                            event=f"{table}_state", reason=f"Authenticated state for {key}.",
                            obligation_id=row["obligation_id"] if table == "payouts" else None,
                            data={"table": table, "key": key, "state_hash": self._row_state_hash(table, row)})
@@ -704,10 +750,25 @@ class Store:
                     pending.append((table, row))
         if not pending:
             return
+        latest_cycle = self.conn.execute(
+            "SELECT cycle_id FROM cycles ORDER BY started_at DESC LIMIT 1").fetchone()
         with self.tx() as c:
             for table, row in pending:
-                self._stamp_row(c, table, *([row["request_id"]] if table == "payouts"
-                                            else [row["cycle_id"], row["op_key"]]))
+                if table == "payouts":
+                    params: list = [row["request_id"]]
+                elif table == "operations":
+                    params = [row["cycle_id"], row["op_key"]]
+                elif table == "approvals":
+                    params = [row["id"]]
+                elif table == "payees":
+                    params = [row["payee_key"]]
+                else:
+                    params = [row["payee_key"], row["id"]]
+                if table in ("payees", "payee_history") and latest_cycle is None:
+                    continue  # no cycle to file the seed event under; stays pending, human decides
+                self._stamp_row(c, table, *params,
+                                cycle_id=latest_cycle["cycle_id"] if table in ("payees", "payee_history")
+                                else None)
 
     # ------------------------------------------------------------------ operations
     def get_operation(self, cycle_id: str, op_key: str) -> dict | None:
@@ -836,28 +897,37 @@ class Store:
                     for r in rows]
 
     def authenticate(self, approver_id: str, pin: str) -> Approver:
-        """Constant-time PIN check with lockout. Unknown ids and wrong PINs fail the same way."""
+        """Constant-time PIN check with lockout. Unknown ids and wrong PINs fail the same way,
+        and account state is only revealed to a correct PIN: a wrong PIN on a deactivated or
+        locked account returns the same generic error as an unknown id, so the error message
+        cannot be used to enumerate accounts or their state."""
+        # The failure is raised AFTER the transaction commits: raising inside the
+        # block would roll back the failed-attempt count and the lockout would never land.
+        failure: str | None = None
         with self.tx() as c:
             self._require_approver_integrity()
             row = c.execute("SELECT * FROM approvers WHERE approver_id = ?", (approver_id,)).fetchone()
             if row is None:
                 self._kdf(pin or "", secrets.token_bytes(16))  # equalise timing
-                raise AuthError("approver id or PIN is incorrect")
-            ok = hmac.compare_digest(self._kdf(pin or "", row["salt"]), row["pin_hash"])
-            if not row["active"]:
-                raise AuthError("approver is deactivated")
-            if row["locked_until"] and datetime.fromisoformat(row["locked_until"]) > datetime.now(timezone.utc):
-                raise AuthError("approver is locked after repeated failed passcodes; try later")
-            if ok:
-                c.execute("UPDATE approvers SET failed_attempts = 0, locked_until = NULL WHERE approver_id = ?",
-                          (approver_id,))
+                failure = "approver id or PIN is incorrect"
             else:
-                failed = row["failed_attempts"] + 1
-                c.execute("UPDATE approvers SET failed_attempts = ?, locked_until = ? WHERE approver_id = ?",
-                          (failed, _lockout_until(failed), approver_id))
-            self._record_approver_state(c, approver_id)
-        if not ok:
-            raise AuthError("approver id or PIN is incorrect")
+                ok = hmac.compare_digest(self._kdf(pin or "", row["salt"]), row["pin_hash"])
+                if not ok:
+                    failed = row["failed_attempts"] + 1
+                    c.execute("UPDATE approvers SET failed_attempts = ?, locked_until = ? WHERE approver_id = ?",
+                              (failed, _lockout_until(failed), approver_id))
+                    self._record_approver_state(c, approver_id)
+                    failure = "approver id or PIN is incorrect"
+                elif not row["active"]:
+                    failure = "approver is deactivated"
+                elif row["locked_until"] and datetime.fromisoformat(row["locked_until"]) > datetime.now(timezone.utc):
+                    failure = "approver is locked after repeated failed passcodes; try later"
+                else:
+                    c.execute("UPDATE approvers SET failed_attempts = 0, locked_until = NULL WHERE approver_id = ?",
+                              (approver_id,))
+                    self._record_approver_state(c, approver_id)
+        if failure is not None:
+            raise AuthError(failure)
         return Approver(row["approver_id"], row["display_name"], frozenset(json.loads(row["roles"])), True)
 
     # ------------------------------------------------------------------ approvals
@@ -881,10 +951,55 @@ class Store:
                           " consumed_ref = ? WHERE id = ?",
                           (req.status.value, req.decided_by, req.decided_at.isoformat() if req.decided_at else None,
                            req.superseded_by, req.consumed_ref, req.id))
+            self._stamp_row(c, "approvals", req.id, cycle_id=cycle_id)
 
     def approval_rows(self, cycle_id: str | None = None) -> list[dict]:
         sql = "SELECT * FROM approvals WHERE (?1 IS NULL OR cycle_id = ?1) ORDER BY created_at"
         return [dict(r) for r in self.conn.execute(sql, (cycle_id,)).fetchall()]
+
+    # ------------------------------------------------------------------ resume state (item 03)
+    def save_deferral(self, cycle_id: str, obligation_id: int, deferred_until: datetime) -> None:
+        with self.tx() as c:
+            c.execute(
+                "INSERT INTO deferrals (cycle_id, obligation_id, deferred_until, updated_at)"
+                " VALUES (?, ?, ?, ?) ON CONFLICT(cycle_id, obligation_id) DO UPDATE SET"
+                " deferred_until = excluded.deferred_until, updated_at = excluded.updated_at",
+                (cycle_id, obligation_id, deferred_until.isoformat(), now_iso()))
+
+    def clear_deferral(self, cycle_id: str, obligation_id: int) -> None:
+        with self.tx() as c:
+            c.execute("DELETE FROM deferrals WHERE cycle_id = ? AND obligation_id = ?",
+                      (cycle_id, obligation_id))
+
+    def deferral_rows(self, cycle_id: str) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM deferrals WHERE cycle_id = ? ORDER BY obligation_id", (cycle_id,)).fetchall()]
+
+    def save_cycle_state(self, cycle_id: str, autonomous_executed: Decimal) -> None:
+        with self.tx() as c:
+            c.execute(
+                "INSERT INTO cycle_state (cycle_id, autonomous_executed, updated_at) VALUES (?, ?, ?)"
+                " ON CONFLICT(cycle_id) DO UPDATE SET autonomous_executed = excluded.autonomous_executed,"
+                " updated_at = excluded.updated_at",
+                (cycle_id, format(autonomous_executed, "f"), now_iso()))
+
+    def cycle_state(self, cycle_id: str) -> Decimal | None:
+        row = self.conn.execute(
+            "SELECT autonomous_executed FROM cycle_state WHERE cycle_id = ?", (cycle_id,)).fetchone()
+        return Decimal(row["autonomous_executed"]) if row else None
+
+    def save_payout_state(self, cycle_id: str, autonomous_paid: Decimal) -> None:
+        with self.tx() as c:
+            c.execute(
+                "INSERT INTO payout_state (cycle_id, autonomous_paid, updated_at) VALUES (?, ?, ?)"
+                " ON CONFLICT(cycle_id) DO UPDATE SET autonomous_paid = excluded.autonomous_paid,"
+                " updated_at = excluded.updated_at",
+                (cycle_id, format(autonomous_paid, "f"), now_iso()))
+
+    def payout_state(self, cycle_id: str) -> Decimal | None:
+        row = self.conn.execute(
+            "SELECT autonomous_paid FROM payout_state WHERE cycle_id = ?", (cycle_id,)).fetchone()
+        return Decimal(row["autonomous_paid"]) if row else None
 
     # ------------------------------------------------------------------ payees
     def get_payee(self, payee_key: str) -> dict | None:
@@ -904,25 +1019,34 @@ class Store:
     def pin_payee(self, payee_key: str, fingerprint: str, masked: str, *, pinned_by: str,
                   approval_id: str | None, audit) -> dict:
         with self.tx() as c:
-            c.execute("INSERT INTO payee_history (payee_key, old_fingerprint, new_fingerprint, changed_at, changed_by,"
-                      " reason) VALUES (?, NULL, ?, ?, ?, ?)",
-                      (payee_key, fingerprint, now_iso(), pinned_by, f"first payment approved ({approval_id})"))
+            cur = c.execute("INSERT INTO payee_history (payee_key, old_fingerprint, new_fingerprint, changed_at,"
+                            " changed_by, reason) VALUES (?, NULL, ?, ?, ?, ?)",
+                            (payee_key, fingerprint, now_iso(), pinned_by, f"first payment approved ({approval_id})"))
+            history_id = cur.lastrowid
             c.execute("INSERT INTO payees VALUES (?, ?, ?, ?, ?, ?)",
                       (payee_key, fingerprint, masked, now_iso(), pinned_by, approval_id))
-            return self._write_audit(c, audit)
+            out = self._write_audit(c, audit)
+            self._stamp_row(c, "payees", payee_key, cycle_id=audit["cycle_id"])
+            self._stamp_row(c, "payee_history", payee_key, history_id, cycle_id=audit["cycle_id"])
+            return out
 
     def repin_payee(self, payee_key: str, fingerprint: str, masked: str, *, changed_by: str, reason: str,
                     audit) -> dict:
         with self.tx() as c:
             old = c.execute("SELECT fingerprint FROM payees WHERE payee_key = ?", (payee_key,)).fetchone()
-            c.execute("INSERT INTO payee_history (payee_key, old_fingerprint, new_fingerprint, changed_at, changed_by,"
-                      " reason) VALUES (?, ?, ?, ?, ?, ?)",
-                      (payee_key, old["fingerprint"] if old else None, fingerprint, now_iso(), changed_by, reason))
+            cur = c.execute("INSERT INTO payee_history (payee_key, old_fingerprint, new_fingerprint, changed_at,"
+                            " changed_by, reason) VALUES (?, ?, ?, ?, ?, ?)",
+                            (payee_key, old["fingerprint"] if old else None, fingerprint, now_iso(), changed_by,
+                             reason))
+            history_id = cur.lastrowid
             if old:
                 c.execute("DELETE FROM payees WHERE payee_key = ?", (payee_key,))
             c.execute("INSERT INTO payees VALUES (?, ?, ?, ?, ?, NULL)",
                       (payee_key, fingerprint, masked, now_iso(), changed_by))
-            return self._write_audit(c, audit)
+            out = self._write_audit(c, audit)
+            self._stamp_row(c, "payees", payee_key, cycle_id=audit["cycle_id"])
+            self._stamp_row(c, "payee_history", payee_key, history_id, cycle_id=audit["cycle_id"])
+            return out
 
     # ------------------------------------------------------------------ payouts
     # An invoice, not an invoice-and-figure, is what may only be paid once. The amount is a property

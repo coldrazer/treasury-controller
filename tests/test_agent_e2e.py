@@ -51,16 +51,23 @@ def test_full_scenario(make_agent, scenario, simulator, mock):
     assert changes[4].superseded_approval and changes[4].new_approval
     assert states[1] is State.FUNDED and states[5] is State.FUNDED
 
-    # Act 4: funded same-currency bills pay directly; the FX conversion still waits for its approval
+    # Act 4: funded bills above the autonomous payout cap are gated like the FX
+    # conversion; only the small bill inside the cap pays directly.
     funded = agent.execute()
     assert {r.obligation_id for r in funded} == {1, 3, 5}
-    assert len(mock.transfers) == 3 and not mock.conversions
+    assert len(mock.transfers) == 1 and not mock.conversions
+    assert sorted(r.ob.id for r in agent.records.values()
+                  if r.state is State.AWAITING_APPROVAL) == [1, 2, 5]
+    for req in [r for r in agent.pending_approvals()
+                if r.kind == "POLICY_EXCEPTION" and r.obligation_id in (1, 5)]:
+        approve(agent, req)
     approve_fx(agent)
     results = agent.execute()
-    assert len(results) == 1 and results[0].obligation_id == 2
+    assert {r.obligation_id for r in results} == {1, 2, 5}
     assert len(mock.conversions) == 1 and len(mock.transfers) == 4 and len(mock.quotes) == 1
     conv = mock.conversions[0]
-    assert conv["buy_amount"] == D("11512.85") and conv["quote_id"] == results[0].quote["quote_id"]
+    fx_result = next(r for r in results if r.obligation_id == 2)
+    assert conv["buy_amount"] == D("11512.85") and conv["quote_id"] == fx_result.quote["quote_id"]
     transfer = next(t for t in mock.transfers.values() if t["transfer_currency"] == "EUR")
     assert transfer["transfer_amount"] == D("12000.00") and transfer["fee_amount"] == D("12.85")
     assert transfer["transfer_method"] == "SWIFT" and transfer["transfer_currency"] == "EUR"
@@ -85,6 +92,10 @@ def test_execute_twice_does_not_duplicate(make_agent, scenario, simulator, mock)
     agent = make_agent()
     run_acts_1_to_3(agent, scenario, simulator)
     approve_fx(agent)
+    agent.execute()  # small bill pays; big bills gate on payout-cap cards
+    for req in [r for r in agent.pending_approvals()
+                if r.kind == "POLICY_EXCEPTION" and r.obligation_id in (1, 5)]:
+        approve(agent, req)
     agent.execute()
     assert agent.execute() == []
     assert len(mock.conversions) == 1 and len(mock.transfers) == 4

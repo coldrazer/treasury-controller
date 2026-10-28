@@ -282,6 +282,12 @@ class DemoSession:
             a.audit.act = "act4"
             results = a.execute()
             a.audit.act = "close"
+            gated = a.pending_approvals()
+            if gated:
+                # Execution itself can gate funded bills above the autonomous payout
+                # cap. Those cards did not exist when act 4 started, so the act stays
+                # locked until a human signs them and act 4 runs again.
+                return {"ok": False, "error": f"{len(gated)} card(s) still await a signature"}
             report = a.reserve_report()
             verify = a.store.verify()
             self.act = 4
@@ -467,6 +473,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.server.session.agent.store.authenticate(approver_id, pin)
         except (AuthError, StoreError) as exc:
+            # A failed dashboard sign-in is a chained audit event like every other
+            # CLI auth failure, so a guessing run leaves a record instead of silence.
+            self.server.session.agent.audit.record(
+                "dashboard_auth_failed", f"Dashboard sign-in failed for {approver_id or '?'}: {exc}.",
+                actor=f"unauthenticated:{approver_id or '?'}")
             self._json({"ok": False, "error": str(exc)}, 403)
             return
         fresh = self.server.sessions.sign_in(session.token, approver_id)

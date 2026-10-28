@@ -6,7 +6,7 @@
     python manage.py add-approver --by dana.controller --id sam.treasury --name "Sam Ortiz" --roles treasury_approver
     python manage.py list-approvers --by dana.controller
     python manage.py deactivate-approver --by dana.controller --id sam.treasury
-    python manage.py pin-payee --by dana.controller --obligation 2 --reason "IBAN confirmed by call-back to +49 ..."
+    python manage.py pin-payee --by dana.controller --obligation 2 --reason "IBAN confirmed by call-back to +49 ..." --confirm-account DE89370400440532013000
     python manage.py list-payouts --by dana.controller
     python manage.py release-payout --by dana.controller --request-id <id> --reason "no transfer on Airwallex"
     python manage.py verify-audit [--anchors anchors.jsonl]        # integrity facts only, no PIN
@@ -162,6 +162,42 @@ def cmd_deactivate_approver(args, settings) -> int:
     return 0
 
 
+def _show_pin_change(ob, previous, fields, new_fp, bank_name=None) -> None:
+    """Full new details next to what was pinned before. The old full number is not
+    stored (only its fingerprint and masked form), so the fingerprint is what proves
+    the destination changed; the new number is shown in full so the controller reads
+    it, not just its last 4."""
+    acct = fields["iban"] or fields["account_number"]
+    label = "IBAN" if fields["iban"] else "account number"
+    print(f"pinning {ob.counterparty} ({ob.name}):")
+    if previous is None:
+        print("  previous: none (first pin for this payee)")
+    else:
+        print(f"  previous: {previous['masked']} (fingerprint {previous['fingerprint'][:12]})")
+    bank = f" · {bank_name}" if bank_name else ""
+    print(f"  new: {label} {acct}{bank} · BIC {fields['swift_code']} · {fields['account_currency']} "
+          f"(fingerprint {new_fp[:12]})")
+    if previous is not None:
+        print("  change: the pinned account fingerprint differs; this is a NEW destination, "
+              "not the one pinned before.")
+
+
+def _confirm_new_account(fields, args) -> None:
+    """The controller types the new account number before a new or changed pin
+    commits. A swapped account sharing the old last 4 must not survive a glance at
+    a masked line, and a call-back that only confirms the last 4 is not enough."""
+    acct = fields["iban"] or fields["account_number"]
+    label = "IBAN" if fields["iban"] else "account number"
+    typed = (getattr(args, "confirm_account", None) or "").replace(" ", "").upper()
+    if not typed:
+        if not sys.stdin.isatty():
+            raise AuthError("refusing to pin a new or changed account without --confirm-account "
+                            "(not a terminal, so no prompt is possible)")
+        typed = input(f"Type the new {label} to confirm: ").replace(" ", "").upper()
+    if typed != acct:
+        raise AuthError("confirmation does not match the new account number; pin refused")
+
+
 def cmd_pin_payee(args, settings) -> int:
     if len(args.reason.strip()) < 10:
         raise AuthError("--reason must say how the account was verified (at least 10 characters)")
@@ -175,13 +211,20 @@ def cmd_pin_payee(args, settings) -> int:
         actor_id = _authorise(store, args.by).approver_id
         masked = masked_account(fields)
         previous = store.get_payee(payee_key(ob))
-        store.repin_payee(payee_key(ob), store.fingerprint("payee-account", fields), masked,
+        new_fp = store.fingerprint("payee-account", fields)
+        if previous is None or previous["fingerprint"] != new_fp:
+            _show_pin_change(ob, previous, fields, new_fp,
+                             bank_name=spec["beneficiary"]["beneficiary"]["bank_details"].get("bank_name"))
+            _confirm_new_account(fields, args)
+        store.repin_payee(payee_key(ob), new_fp, masked,
                           changed_by=actor_id, reason=args.reason.strip(),
                           audit=_draft(store, f"approver:{actor_id}", "payee_pinned",
                                        f"{ob.counterparty} pinned to {masked}"
                                        + (f" (was {previous['masked']})" if previous else "")
                                        + f": {args.reason.strip()}",
-                                       obligation_id=ob.id, destination=masked))
+                                       obligation_id=ob.id, destination=masked,
+                                       fingerprint=new_fp,
+                                       previous_fingerprint=previous["fingerprint"] if previous else None))
     print(f"pinned {ob.counterparty} → {masked}")
     return 0
 
@@ -322,6 +365,8 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--by", required=True)
     pp.add_argument("--reason", required=True, help="how the account was verified (call-back, signed letter...)")
     pp.add_argument("--scenario", help="scenario JSON (default: fixtures/scenario.json)")
+    pp.add_argument("--confirm-account", help="type the new IBAN or account number to confirm "
+                                              "a new or changed pin (prompted when omitted)")
     pp.set_defaults(fn=cmd_pin_payee)
     lp = sub.add_parser("list-payouts", help="list payout reservations (audited read)")
     lp.add_argument("--by", help="approver signing in for the read (required: reads are audited)")

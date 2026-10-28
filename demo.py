@@ -324,6 +324,17 @@ def act4(ui: UI, agent: TreasuryAgent, simulator: SandboxSimulator, *, auto: boo
             obtain_approval(ui, agent, req, auto=auto, credentials=credentials_for(req.kind))
             ui.pause()
     results = agent.execute()
+    # Funded bills above the autonomous payout cap are gated during execution, so
+    # their cards only exist after the first execute. Approve them and run again;
+    # escalation cards sit on ESCALATED records and stay with a human.
+    for req in agent.pending_approvals():
+        record = agent.records.get(req.obligation_id)
+        if req.kind == "POLICY_EXCEPTION" and record is not None \
+                and record.state is State.AWAITING_APPROVAL:
+            ui.section(f"Human approval for #{req.obligation_id}")
+            obtain_approval(ui, agent, req, auto=auto, credentials=credentials_for(req.kind))
+            ui.pause()
+    results += agent.execute()
     if not results:
         ui.out(ui.s("    Nothing is authorised to execute (approval still pending).", "yellow"))
     for res in results:
@@ -503,7 +514,8 @@ def main(argv=None) -> int:
     agent = TreasuryAgent(client, obligations=scenario.obligations, receipt=scenario.expected_receipt,
                           payouts=scenario.payouts, reader=make_reader(llm), explainer=Explainer(llm),
                           store=store, cycle_id=cycle, operator=operator, mode=mode, screener=screener,
-                          cash_cap=cap)
+                          cash_cap=cap,
+                          operator_approver_id=None if use_mock else settings.operator_approver_id)
     if use_mock:
         seed_mock_payees(agent, scenario)
     simulator = SandboxSimulator(client)

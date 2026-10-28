@@ -365,6 +365,16 @@ def test_dashboard_act4_stays_locked_until_a_human_signs_each_card(dashboard):
     assert signed["status"] == 200 and treasury.json(signed)["pending"] == 0
 
     executed = treasury.run(4)
+    assert executed["status"] == 409 and session.act == 3
+    # Execution gated the funded bills above the autonomous payout cap; those cards
+    # did not exist when act 4 started, so they need signatures too before the money moves.
+    pending = treasury.json(treasury.get("/api/state"))["pending_approvals"]
+    assert len(pending) == 2 and all(c["kind"] == "POLICY_EXCEPTION" for c in pending)
+    for card in pending:
+        signed = controller.post("/api/sign", sign_body(card, "dana.controller",
+                                                        DEMO_APPROVERS["dana.controller"][2]))
+        assert signed["status"] == 200
+    executed = treasury.run(4)
     assert executed["status"] == 200, executed["body"]
     assert session.act == 4
     assert treasury.json(executed)["audit"]["verified"] is True

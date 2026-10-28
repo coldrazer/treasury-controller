@@ -225,6 +225,21 @@ def masked_account(fields: Mapping) -> str:
     return text + f" · {fields['account_currency']}"
 
 
+def extended_account(fields: Mapping, bank_name: str | None = None) -> str:
+    """First 4 and last 4 of the account plus bank name, BIC and currency, for
+    cards whose destination is new or changed: enough to tell a swapped account
+    apart (two accounts sharing a last 4 differ in the first 4), without printing
+    the full number on a card."""
+    acct = fields["iban"] or fields["account_number"]
+    shown = f"{acct[:4]}••{acct[-4:]}" if len(acct) > 4 else acct
+    text = ("IBAN " if fields["iban"] else "Acct ") + shown
+    if bank_name:
+        text += f" · {bank_name}"
+    if fields["swift_code"]:
+        text += f" · BIC {fields['swift_code']}"
+    return text + f" · {fields['account_currency']}"
+
+
 # ---------------------------------------------------------------------------
 # The agent
 # ---------------------------------------------------------------------------
@@ -234,9 +249,13 @@ class TreasuryAgent:
                  explainer: Explainer, store: Store, cycle_id: str, operator: str, mode: str = "live",
                  screener: Screener | None = None, policy: PolicyConfig = DEFAULT_POLICY,
                  cash_cap: Mapping[str, Decimal] | None = None, sleep=time.sleep,
-                 clock: Callable[[], datetime] | None = None):
+                 clock: Callable[[], datetime] | None = None,
+                 operator_approver_id: str | None = None):
         if not operator:
             raise ValueError("the operator running the agent must be identified")
+        # When the operator's approver id is known, cards name that id as requester,
+        # so segregation of duties compares authenticated-style ids instead of the
+        # unauthenticated OS user name (see approvals._same_person for the fallback).
         self.client = client
         self.policy = policy
         self.receipt = receipt
@@ -246,6 +265,7 @@ class TreasuryAgent:
         self.store = store
         self.cycle_id = cycle_id
         self.operator = operator
+        self.requester = operator_approver_id or operator
         self.screener = screener
         self.cash_cap = dict(cash_cap) if cash_cap else None
         self._sleep = sleep
@@ -272,13 +292,37 @@ class TreasuryAgent:
         self.assessment: Assessment | None = None
         self.confidence: Decimal = Decimal("0")
         self.autonomous_executed: Decimal = ZERO
+        self.autonomous_paid: Decimal = ZERO
         self.halted: str | None = None
+        self._restore_resume_state()
         self.audit.record("cycle_started", f"Cycle {cycle_id} started by {operator} ({mode}).",
                           actor=f"operator:{operator}", policy_fingerprint=self.policy_fp,
                           code_fingerprint=store.cycle(cycle_id)["code_fingerprint"],
                           model=getattr(reader, "name", "rules"),
                           screening_list=getattr(screener, "version", None),
                           audit_chain=store.keyed and "hmac-sha256" or "sha256")
+
+    def _restore_resume_state(self) -> None:
+        """Item 03: a reopened cycle resumes its deferral dates and its autonomous total
+        instead of silently resetting them. Records stay PENDING: triage re-decides them,
+        and the defer path keeps a restored date that is still in the future rather than
+        resetting it. Rows for obligations no longer in the scenario are dropped."""
+        for row in self.store.deferral_rows(self.cycle_id):
+            rec = self.records.get(row["obligation_id"])
+            if rec is None:
+                self.store.clear_deferral(self.cycle_id, row["obligation_id"])
+                continue
+            rec.deferred_until = datetime.fromisoformat(row["deferred_until"])
+            self.audit.record("deferral_restored",
+                              f"Deferral for #{rec.ob.id} resumed after reopen: review "
+                              f"{rec.deferred_until.isoformat()}.",
+                              obligation_id=rec.ob.id)
+        saved = self.store.cycle_state(self.cycle_id)
+        if saved is not None:
+            self.autonomous_executed = saved
+        saved_paid = self.store.payout_state(self.cycle_id)
+        if saved_paid is not None:
+            self.autonomous_paid = saved_paid
 
     # ------------------------------------------------------------------ basics
     def _read_balances(self) -> dict[str, Decimal]:
@@ -362,6 +406,22 @@ class TreasuryAgent:
             return None
         fields = account_fields((spec.get("beneficiary") or {}).get("bank_details") or {})
         return self.store.fingerprint("payee-account", fields), masked_account(fields)
+
+    def _destination_display(self, ob: Obligation) -> tuple[str, str] | None:
+        """(fingerprint, display) for an approval card: the extended form when the
+        destination is new or changed, the masked form when it is already pinned
+        as-is. A card for a changed destination must not look identical to the old one."""
+        dest = self._destination(ob)
+        if dest is None:
+            return None
+        fp, masked = dest
+        pin = self.store.get_payee(payee_key(ob))
+        if pin is None or pin["fingerprint"] != fp:
+            spec = self._beneficiary_spec(ob.id)
+            details = (spec.get("beneficiary") or {}).get("bank_details") or {}
+            fields = account_fields(details)
+            return fp, extended_account(fields, bank_name=details.get("bank_name"))
+        return fp, masked
 
     # ------------------------------------------------------------------ Act 1
     def bootstrap(self) -> None:
@@ -448,8 +508,10 @@ class TreasuryAgent:
             now = self._now()
             if rec.deferred_until is None or rec.deferred_until <= now:
                 rec.deferred_until = now + timedelta(days=self.policy.deferral_horizon_days)
+            self.store.save_deferral(self.cycle_id, ob.id, rec.deferred_until)
         else:
             rec.deferred_until = None
+            self.store.clear_deferral(self.cycle_id, ob.id)
         if target is State.AWAITING_APPROVAL:
             self._request_fx_approval(rec)
         elif target is State.ESCALATED:
@@ -472,7 +534,7 @@ class TreasuryAgent:
         d, ob = rec.decision, rec.ob
         fx = d.fx
         limit = rules.autonomous_fx_limit(self.confidence)
-        dest = self._destination(ob)
+        dest = self._destination_display(ob)
         if dest is None:
             self._halt(f"no beneficiary details on file for obligation #{ob.id}; cannot bind a destination")
         dest_fp, dest_masked = dest
@@ -501,7 +563,7 @@ class TreasuryAgent:
         note, source = self.explainer.explain(facts)
         req = self.approvals.request(
             kind="FX_CONVERSION", obligation_id=ob.id, action="CONVERT", amount=fx.buy_amount,
-            currency=fx.buy_currency, counterparty=ob.counterparty, evidence=evidence, requested_by=self.operator,
+            currency=fx.buy_currency, counterparty=ob.counterparty, evidence=evidence, requested_by=self.requester,
             sell_currency=fx.sell_currency, max_sell_amount=ceiling, destination=dest_masked,
             destination_fp=dest_fp, explanation=note)
         self._record_request(rec, req, source, max_sell=ceiling)
@@ -522,13 +584,13 @@ class TreasuryAgent:
                 if d.rule == "R5_ESCALATE_THRESHOLD" else f"Rule {d.rule}: {d.reason}",
                 funding,
             ]
-        dest = self._destination(ob)
+        dest = self._destination_display(ob)
         note, source = self.explainer.explain({
             "ask": f"Decide on paying {fmt(ob.amount, ob.currency)} to {ob.counterparty} ({ob.name}), "
                    f"due in {ob.due_in_hours}h.", "why": why or d.reason})
         req = self.approvals.request(
             kind="POLICY_EXCEPTION", obligation_id=ob.id, action="PAYOUT", amount=ob.amount,
-            currency=ob.currency, counterparty=ob.counterparty, evidence=evidence, requested_by=self.operator,
+            currency=ob.currency, counterparty=ob.counterparty, evidence=evidence, requested_by=self.requester,
             destination=dest[1] if dest else None, destination_fp=dest[0] if dest else None, explanation=note)
         self._record_request(rec, req, source)
         return req
@@ -540,7 +602,7 @@ class TreasuryAgent:
                     f"Names screened: {', '.join(self._payee_names(ob))}.", why]
         req = self.approvals.request(kind="SCREENING_REVIEW", obligation_id=ob.id, action="CLEAR_SCREENING_HIT",
                                      amount=ob.amount, currency=ob.currency, counterparty=ob.counterparty,
-                                     evidence=evidence, requested_by=self.operator, explanation=why)
+                                     evidence=evidence, requested_by=self.requester, explanation=why)
         self._record_request(rec, req, "template")
         return req
 
@@ -551,7 +613,7 @@ class TreasuryAgent:
                                                       f"to {ob.counterparty}.", "why": why})
         req = self.approvals.request(kind="PAYOUT_FAILED", obligation_id=ob.id, action="RESEND_PAYOUT",
                                      amount=ob.amount, currency=ob.currency, counterparty=ob.counterparty,
-                                     evidence=evidence, requested_by=self.operator, explanation=note)
+                                     evidence=evidence, requested_by=self.requester, explanation=note)
         self._record_request(rec, req, source)
         return req
 
@@ -725,13 +787,34 @@ class TreasuryAgent:
         for rec in self.records.values():
             if rec.state is State.FUNDED:
                 if rec.transfer is None:
-                    results.append(self._pay(rec, ExecutionResult(rec.ob.id, "in_flight", "funding payout")))
+                    if rules.requires_payout_approval(rec.decision.usd_draw, self.confidence,
+                                                      self.autonomous_paid):
+                        limit = rules.autonomous_payout_limit(self.confidence)
+                        why = (f"R7: autonomous payout {fmt(rec.decision.usd_draw, BASE_CURRENCY)} plus "
+                               f"{fmt(self.autonomous_paid, BASE_CURRENCY)} already paid autonomously exceeds "
+                               f"the limit {fmt(limit, BASE_CURRENCY)} at forecast confidence "
+                               f"{self.confidence}; a human must approve.")
+                        rec.decision = replace(rules.with_note(rec.decision, why), requires_approval=True)
+                        self._transition(rec, State.AWAITING_APPROVAL, why, "R7_PAYOUT_CAP")
+                        self._request_exception_approval(rec, why)
+                        results.append(ExecutionResult(rec.ob.id, "gated", why))
+                    else:
+                        results.append(self._pay(rec, ExecutionResult(rec.ob.id, "in_flight", "funding payout")))
             elif rec.state is State.FX_PLANNED:
                 results.append(self._convert_and_pay(rec))
             elif rec.state is State.AWAITING_APPROVAL:
                 req = self.approvals.get(rec.approval_id) if rec.approval_id else None
                 if req and req.status is ApprovalStatus.APPROVED:
-                    results.append(self._convert_and_pay(rec))
+                    if req.kind == "POLICY_EXCEPTION":
+                        # Only the payout-cap gate parks a record here with an exception
+                        # card; every other exception card sits on an ESCALATED record
+                        # and is handed off, never executed.
+                        res = self._pay(rec, ExecutionResult(rec.ob.id, "in_flight", "approved payout"))
+                        if res.transfer:
+                            self.approvals.consume(req.id, ref=str(res.transfer.get("id")))
+                        results.append(res)
+                    else:
+                        results.append(self._convert_and_pay(rec))
             elif rec.state is State.CONVERTED and rec.transfer is None:
                 results.append(self._pay(rec, ExecutionResult(rec.ob.id, "in_flight", "resuming payout")))
             elif rec.state is State.ESCALATED and rec.approval_id:
@@ -877,6 +960,7 @@ class TreasuryAgent:
                            "below the reserve floor")
             if autonomous:
                 self.autonomous_executed = q2(self.autonomous_executed + sold)
+                self.store.save_cycle_state(self.cycle_id, self.autonomous_executed)
         if rec.approval_id and self.approvals.get(rec.approval_id).status is ApprovalStatus.APPROVED:
             req = self.approvals.consume(rec.approval_id, ref=str(conv.get("conversion_id")))
             if self.store.get_payee(payee_key(ob)) is None and req.destination_fp == fp:
@@ -1038,6 +1122,7 @@ class TreasuryAgent:
         ob, d = rec.ob, rec.decision
         key = f"transfer:ob{ob.id}"
         if self.ops.result(key) is None:
+            self._sync()
             prior = self._prior_payment(rec)
             if prior:
                 why = (f"Invoice {ob.reference} already paid by transfer {prior.get('id')} "
@@ -1055,6 +1140,17 @@ class TreasuryAgent:
                 self._escalate(rec, why, "R8_PAYEE_NOT_PINNED", kind="POLICY_EXCEPTION", release_reserved=False)
                 result.status, result.detail = "blocked", why
                 return result
+            if rec.state is not State.CONVERTED:
+                # A converted payout sends funds already bought and ring-fenced; the
+                # floor was checked at conversion time. Any other payout draws cash.
+                others = self.ledger.committed(BASE_CURRENCY, exclude_obligation=ob.id)
+                if not rules.reserve_ok(self.ledger.balance(BASE_CURRENCY) - d.usd_draw,
+                                        others, self.policy):
+                    why = (f"Paying {fmt(ob.amount, ob.currency)} would breach the reserve "
+                           f"floor; not executed.")
+                    self.audit.record("blocked", why, obligation_id=ob.id)
+                    result.status, result.detail = "blocked", why
+                    return result
         else:
             fp = None
         # The beneficiary first: if Airwallex rejects the payee details, no payout row is reserved.
@@ -1102,6 +1198,11 @@ class TreasuryAgent:
             self.ledger.apply_outflow(ob.currency, payer_pays, allow_negative=True)
         rec.transfer = transfer
         self._update_payout_row(rid, transfer)
+        if rec.state is State.FUNDED and not replayed:
+            # Only autonomous payouts consume the cap: an approved payout is human
+            # spending, and a replayed transfer was already counted when created.
+            self.autonomous_paid = q2(self.autonomous_paid + d.usd_draw)
+            self.store.save_payout_state(self.cycle_id, self.autonomous_paid)
         self.audit.record("payout_sent", f"Transfer {transfer.get('id')} for {fmt(ob.amount, ob.currency)} via "
                           f"{ob.payout_method} to {ob.counterparty} (payer pays {fmt(payer_pays, ob.currency)}); "
                           f"status {transfer.get('status')}.", obligation_id=ob.id,
@@ -1120,7 +1221,7 @@ class TreasuryAgent:
 
     def _settle_status(self, rec: ObligationRecord, result: ExecutionResult) -> ExecutionResult:
         status = (rec.transfer or {}).get("status")
-        if status in TRANSFER_SUCCESS and rec.state in {State.CONVERTED, State.FUNDED}:
+        if status in TRANSFER_SUCCESS and rec.state in {State.CONVERTED, State.FUNDED, State.AWAITING_APPROVAL}:
             self._transition(rec, State.PAID, f"Transfer {rec.transfer.get('id')} reached PAID.", "PAYOUT_SETTLED")
             result.status = "paid_out"
         elif status in TRANSFER_FAILED:
@@ -1133,7 +1234,7 @@ class TreasuryAgent:
     def refresh_payouts(self) -> list[ExecutionResult]:
         out = []
         for rec in self.records.values():
-            if rec.state not in {State.CONVERTED, State.FUNDED} or not rec.transfer:
+            if rec.state not in {State.CONVERTED, State.FUNDED, State.AWAITING_APPROVAL} or not rec.transfer:
                 continue
             latest = self.client.get_transfer(rec.transfer["id"])
             previous = rec.transfer.get("status")
@@ -1185,6 +1286,7 @@ class TreasuryAgent:
             "halted": self.halted,
             "confidence": self.confidence,
             "autonomous_executed": self.autonomous_executed,
+            "autonomous_paid": self.autonomous_paid,
             "rates": self.rates,
             "ledger": {"opening": self.ledger.opening, "actual_opening": self.ledger.actual_opening,
                        "balances": self.ledger.balances,

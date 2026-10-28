@@ -7,8 +7,8 @@ $ python3 demo.py --mock --yes
   Five bills fall due in 72 hours across USD, EUR and GBP. Cash above a USD 10,000.00 reserve floor
   covers only part of them. The agent must choose what to fund, what to convert, what to defer and
   what a human must decide — and adapt when the evidence or the balance changes.
-  Running against offline mock sandbox at http://127.0.0.1:54926 · model: none (deterministic reader) · cycle 20261023T100031Z-befcf3
-  Operator demo.operator · audit DB 20261023T100031Z-befcf3.db (HMAC-chained) · screening demo-2026-10-18
+  Running against offline mock sandbox at http://127.0.0.1:41911 · model: none (deterministic reader) · cycle 20261026T161947Z-363575
+  Operator demo.operator · audit DB 20261026T161947Z-363575.db (HMAC-chained) · screening demo-2026-10-18
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ACT 1 — INITIAL TRIAGE  ·  read balances, list obligations, plan with reasons
@@ -57,12 +57,12 @@ Plan in priority order (policy.py rules; each decision with its reason)
 
 Escalated to a human: #4 Contractor payout
     ┌────────────────────────────────────────────────────────────────────────────────────────────
-    │ APPROVAL REQUIRED · POLICY_EXCEPTION · apr_3f4eac7db306 · code B8431A47
+    │ APPROVAL REQUIRED · POLICY_EXCEPTION · apr_c247a839ca62 · code EDE7A837
     │ Action       PAYOUT
     │ Amount       GBP 15,000.00
     │ Counterparty Harper & Lowe Engineering Ltd
     │ Requested by demo.operator
-    │ Expires      2026-10-24 10:00 UTC
+    │ Expires      2026-10-27 16:19 UTC
     │ Evidence
     │   • Obligation #4 Contractor payout: GBP 15,000.00 to Harper & Lowe Engineering Ltd, due
     │     in 48h.
@@ -113,14 +113,14 @@ Approval gate: #2 Supplier (Germany) — same action, now needs a human
         ↳ R7: conversion ≈ USD 12,491.45 now exceeds the autonomous limit USD 2,500.00 (confidence
         0.92 → 0.37); the same action now needs a human.
     ┌────────────────────────────────────────────────────────────────────────────────────────────
-    │ APPROVAL REQUIRED · FX_CONVERSION · apr_71ea93b50212 · code 721676BF
+    │ APPROVAL REQUIRED · FX_CONVERSION · apr_7e8dc034769f · code 5C915C64
     │ Action       CONVERT
     │ Amount       EUR 11,512.85
     │ Counterparty Mueller Feinmechanik GmbH
     │ Destination  IBAN ****3000 · BIC COBADEFFXXX · EUR
     │ Pay with     USD, at most USD 12,553.91
     │ Requested by demo.operator
-    │ Expires      2026-10-24 10:00 UTC
+    │ Expires      2026-10-27 16:19 UTC
     │ Evidence
     │   • Obligation #2 Supplier (Germany): EUR 12,000.00 to Mueller Feinmechanik GmbH, due in
     │     48h.
@@ -162,14 +162,14 @@ Recalculation event (not a rerun)
         after:  USD 19,050.00 equivalent exceeds the USD 15,000.00 single-payment threshold; routed
         to a human. The agent will not split it to fit under the limit. Funding: fully coverable;
         USD 19,050.00 held pending approval.
-        approval apr_3f4eac7db306 superseded: its evidence changed
+        approval apr_c247a839ca62 superseded: its evidence changed
     ┌────────────────────────────────────────────────────────────────────────────────────────────
-    │ APPROVAL REQUIRED · POLICY_EXCEPTION · apr_23ad1bcf7ff6 · code 5C5B6A83
+    │ APPROVAL REQUIRED · POLICY_EXCEPTION · apr_9c7cd5e0c997 · code C524B7A6
     │ Action       PAYOUT
     │ Amount       GBP 15,000.00
     │ Counterparty Harper & Lowe Engineering Ltd
     │ Requested by demo.operator
-    │ Expires      2026-10-24 10:00 UTC
+    │ Expires      2026-10-27 16:19 UTC
     │ Evidence
     │   • Obligation #4 Contractor payout: GBP 15,000.00 to Harper & Lowe Engineering Ltd, due
     │     in 48h.
@@ -193,14 +193,14 @@ Recalculation event (not a rerun)
 
 Human approval for #2
     ┌────────────────────────────────────────────────────────────────────────────────────────────
-    │ APPROVAL REQUIRED · FX_CONVERSION · apr_71ea93b50212 · code 721676BF
+    │ APPROVAL REQUIRED · FX_CONVERSION · apr_7e8dc034769f · code 5C915C64
     │ Action       CONVERT
     │ Amount       EUR 11,512.85
     │ Counterparty Mueller Feinmechanik GmbH
     │ Destination  IBAN ****3000 · BIC COBADEFFXXX · EUR
     │ Pay with     USD, at most USD 12,553.91
     │ Requested by demo.operator
-    │ Expires      2026-10-24 10:00 UTC
+    │ Expires      2026-10-27 16:19 UTC
     │ Evidence
     │   • Obligation #2 Supplier (Germany): EUR 12,000.00 to Mueller Feinmechanik GmbH, due in
     │     48h.
@@ -217,43 +217,112 @@ Human approval for #2
     │   forecast confidence 0.37. Customer reports a 14-day delay, pushing the receipt past
     │   the 72h planning window; confidence x0.40.
     └────────────────────────────────────────────────────────────────────────────────────────────
-    sam.treasury signs in with their PIN, reviews the card and types code 721676BF (--yes: unattended approver)
+    sam.treasury signs in with their PIN, reviews the card and types code 5C915C64 (--yes: unattended approver)
     ✓ Approved by sam.treasury. Bound to EUR 11,512.85 → Mueller Feinmechanik GmbH at IBAN ****3000 · BIC COBADEFFXXX · EUR; single use.
 
+Human approval for #1
+    ┌────────────────────────────────────────────────────────────────────────────────────────────
+    │ APPROVAL REQUIRED · POLICY_EXCEPTION · apr_1b2a5f88c5d9 · code 4DAE77D9
+    │ Action       PAYOUT
+    │ Amount       USD 8,500.00
+    │ Counterparty Pacific Freight Lines
+    │ Destination  Acct ****3210 · USD
+    │ Requested by demo.operator
+    │ Expires      2026-10-27 16:19 UTC
+    │ Evidence
+    │   • Obligation #1 Shipping invoice: USD 8,500.00 to Pacific Freight Lines, due in 24h.
+    │   • R7: autonomous payout USD 8,500.00 plus USD 0.00 already paid autonomously exceeds
+    │     the limit USD 2,500.00 at forecast confidence 0.37; a human must approve.
+    │ Note for approver
+    │   Decide on paying USD 8,500.00 to Pacific Freight Lines (Shipping invoice), due in
+    │   24h. R7: autonomous payout USD 8,500.00 plus USD 0.00 already paid autonomously
+    │   exceeds the limit USD 2,500.00 at forecast confidence 0.37; a human must approve.
+    └────────────────────────────────────────────────────────────────────────────────────────────
+    dana.controller signs in with their PIN, reviews the card and types code 4DAE77D9 (--yes: unattended approver)
+    ✓ Approved by dana.controller. Bound to USD 8,500.00 → Pacific Freight Lines at Acct ****3210 · USD; single use.
+
+Human approval for #5
+    ┌────────────────────────────────────────────────────────────────────────────────────────────
+    │ APPROVAL REQUIRED · POLICY_EXCEPTION · apr_42b829796e22 · code 56271B74
+    │ Action       PAYOUT
+    │ Amount       USD 6,000.00
+    │ Counterparty Riverside Properties LLC
+    │ Destination  Acct ****4455 · USD
+    │ Requested by demo.operator
+    │ Expires      2026-10-27 16:19 UTC
+    │ Evidence
+    │   • Obligation #5 Office rent: USD 6,000.00 to Riverside Properties LLC, due in 72h.
+    │   • R7: autonomous payout USD 6,000.00 plus USD 0.00 already paid autonomously exceeds
+    │     the limit USD 2,500.00 at forecast confidence 0.37; a human must approve.
+    │ Note for approver
+    │   Decide on paying USD 6,000.00 to Riverside Properties LLC (Office rent), due in 72h.
+    │   R7: autonomous payout USD 6,000.00 plus USD 0.00 already paid autonomously exceeds
+    │   the limit USD 2,500.00 at forecast confidence 0.37; a human must approve.
+    └────────────────────────────────────────────────────────────────────────────────────────────
+    dana.controller signs in with their PIN, reviews the card and types code 56271B74 (--yes: unattended approver)
+    ✓ Approved by dana.controller. Bound to USD 6,000.00 → Riverside Properties LLC at Acct ****4455 · USD; single use.
+
+#1 Shipping invoice
+    ✗ gated: R7: autonomous payout USD 8,500.00 plus USD 0.00 already paid autonomously exceeds the limit USD 2,500.00 at forecast confidence 0.37; a human must approve.
+
+#5 Office rent
+    ✗ gated: R7: autonomous payout USD 6,000.00 plus USD 0.00 already paid autonomously exceeds the limit USD 2,500.00 at forecast confidence 0.37; a human must approve.
+
 #2 Supplier (Germany)
-    1. Quote   POST /fx/quotes/create  → e07f25f7-52a0-4cde-b2d0-67fa2b52ea14  buy EUR 11,512.85 for USD 12,491.44 (single use, no x-api-version)
-    2. Convert POST /fx/conversions/create → 11cf36d6-1673-4e11-9dff-883bbcf9b93b  status SETTLED  rate 1.0850
-    3. Payee   POST /beneficiaries/create   → 845f8b3b-d347-40c1-be4d-23b630f22831 (schema-checked: DE · EUR · SWIFT)
-    4. Pay     POST /transfers/create       → 94df0752-51d7-4fe7-9dac-60eff12c6cbb  EUR 12,000.00 + fee EUR 12.85  status PROCESSING
+    1. Quote   POST /fx/quotes/create  → 0c888dc8-4586-41cd-8697-aa620f9acb8b  buy EUR 11,512.85 for USD 12,491.44 (single use, no x-api-version)
+    2. Convert POST /fx/conversions/create → 4103e947-1122-41a4-84ab-424e37508bed  status SETTLED  rate 1.0850
+    3. Payee   POST /beneficiaries/create   → f3b399a9-1a5e-4f78-89db-277b8772edaf (schema-checked: DE · EUR · SWIFT)
+    4. Pay     POST /transfers/create       → b1d3549a-01e3-4131-ac79-4631eddd3a25  EUR 12,000.00 + fee EUR 12.85  status PROCESSING
+       transfer status → SENT (in flight, not final)
+       transfer status → PAID (terminal)
+
+#3 Software licenses
+    3. Payee   POST /beneficiaries/create   → 5e01e2bd-786e-4dcc-9138-98f534457f94 (schema-checked: US · USD · LOCAL)
+    4. Pay     POST /transfers/create       → b46a9ede-f404-4117-8d5f-7dbe8e606ad2  USD 1,200.00 + fee USD 0.00  status PROCESSING
+       transfer status → SENT (in flight, not final)
+       transfer status → PAID (terminal)
+
+#1 Shipping invoice
+    3. Payee   POST /beneficiaries/create   → cefef7cb-5982-4496-ad47-76a3c81ad2f9 (schema-checked: US · USD · LOCAL)
+    4. Pay     POST /transfers/create       → 9a9028bf-6375-4c16-9b47-470e5e00a89b  USD 8,500.00 + fee USD 0.00  status PROCESSING
+       transfer status → SENT (in flight, not final)
+       transfer status → PAID (terminal)
+
+#5 Office rent
+    3. Payee   POST /beneficiaries/create   → cfc83972-e3fa-44a9-adf2-d93260bcd56d (schema-checked: US · USD · LOCAL)
+    4. Pay     POST /transfers/create       → e344ed40-e79d-46b5-b37a-f40a86a84d81  USD 6,000.00 + fee USD 0.00  status PROCESSING
        transfer status → SENT (in flight, not final)
        transfer status → PAID (terminal)
 
 Reserve confirmation (balances re-read and reconciled)
-    Airwallex now: USD 50,008.56   EUR 0.00   GBP 0.00
-    Ledger book:   USD 50,008.56   EUR 0.00   GBP 0.00
-    USD committed 34,750.00 (funded 15,700.00, held_pending_approval 19,050.00)
+    Airwallex now: USD 34,308.56   EUR 0.00   GBP 0.00
+    Ledger book:   USD 34,308.56   EUR 0.00   GBP 0.00
+    USD committed 19,050.00 (held_pending_approval 19,050.00)
     USD uncommitted 15,258.56 vs floor 10,000.00 → FLOOR INTACT · headroom 5,258.56
 ══════════════════ RESERVE FLOOR USD 10,000.00 · hard line, never planned through ══════════════════
-    ██████████████████████████████████████████████████████████████████████████████░░░░░░░░░░
-    ■ committed 34,750.00   ■ floor 10,000.00   ■ free headroom 5,258.56
+    █████████████████████████████████████████████████████████████████████████░░░░░░░░░░░░░░░
+    ■ committed 19,050.00   ■ floor 10,000.00   ■ free headroom 5,258.56
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  CLOSE  ·  starting balance → decisions → deposit → final balance
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Start      USD 37,500.00   EUR 500.00   GBP 0.00
   Decisions
-    #1 Shipping invoice        USD 8,500.00  pending → funded   (R1_FUND_OPERATIONS_CRITICAL)
-    #5 Office rent             USD 6,000.00  pending → funded   (R2_FUND_FIXED)
+    #1 Shipping invoice        USD 8,500.00  pending → funded → awaiting_approval → paid   (PAYOUT_SETTLED)
+    #5 Office rent             USD 6,000.00  pending → funded → awaiting_approval → paid   (PAYOUT_SETTLED)
     #2 Supplier (Germany)     EUR 12,000.00  pending → fx_planned → awaiting_approval → converted → paid   (PAYOUT_SETTLED)
     #4 Contractor payout      GBP 15,000.00  pending → escalated → escalated   (R5_ESCALATE_THRESHOLD)
-    #3 Software licenses       USD 1,200.00  pending → deferred → funded   (R2_FUND)
+    #3 Software licenses       USD 1,200.00  pending → deferred → funded → paid   (PAYOUT_SETTLED)
   Deposit    +USD 25,000.00 from Bluefin Retail → recalculated only the cash-constrained decisions
-  Final      USD 50,008.56   EUR 0.00   GBP 0.00
+  Final      USD 34,308.56   EUR 0.00   GBP 0.00
   Reserve    USD 15,258.56 uncommitted ≥ floor 10,000.00: INTACT   (ledger reconciled with Airwallex: yes)
-  Waiting on a human: #4 GBP 15,000.00 → Harper & Lowe Engineering Ltd (code 5C5B6A83)
+  Waiting on a human: #4 GBP 15,000.00 → Harper & Lowe Engineering Ltd (code C524B7A6)
 
 Audit log · every action with its reason
+  setup  #1  payee_pinned        [seed:mock-demo] Pacific Freight Lines pinned to Acct [...]
   setup  #2  payee_pinned        [seed:mock-demo] Mueller Feinmechanik GmbH pinned to IBAN [...]
+  setup  #3  payee_pinned        [seed:mock-demo] Stackwise Software Inc. pinned to Acct [...]
+  setup  #5  payee_pinned        [seed:mock-demo] Riverside Properties LLC pinned to Acct [...]
   act1   #1  state               Non-payment stops operations; funded first from USD above [...]
   act1   #5  state               Fixed and non-negotiable; funded from USD above the floor. [...]
   act1   #2  state               Time-sensitive EUR payment. Converts the minimum: EUR [...]
@@ -270,28 +339,53 @@ Audit log · every action with its reason
   act3   #3  state               Fits within headroom after higher-priority items; funded [...]
   act3       recalculated        Recalculated #4, #3; untouched #1, #5, #2.
   act4   #2  approval_granted    [approver:sam.treasury] Sam Ortiz (Treasury) (sam.treasury) [...]
+  act4   #1  state               R7: autonomous payout USD 8,500.00 plus USD 0.00 already [...]
+  act4   #1  approval_requested  Decide on paying USD 8,500.00 to Pacific Freight Lines [...]
+  act4   #5  state               R7: autonomous payout USD 6,000.00 plus USD 0.00 already [...]
+  act4   #5  approval_requested  Decide on paying USD 6,000.00 to Riverside Properties LLC [...]
   act4   #2  fx_quote            Locked single-use quote [...]
   act4   #2  state               Converted the minimum over REST: sold USD 12,491.44, bought [...]
-  act4   #2  beneficiary_created Created beneficiary 845f8b3b-d347-40c1-be4d-23b630f22831 for [...]
-  act4   #2  payout_sent         Transfer 94df0752-51d7-4fe7-9dac-60eff12c6cbb for EUR [...]
-  act4   #2  payout_status       Transfer 94df0752-51d7-4fe7-9dac-60eff12c6cbb: PROCESSING → SENT.
-  act4   #2  payout_status       Transfer 94df0752-51d7-4fe7-9dac-60eff12c6cbb: SENT → PAID.
-  act4   #2  state               Transfer 94df0752-51d7-4fe7-9dac-60eff12c6cbb reached PAID.
+  act4   #2  beneficiary_created Created beneficiary f3b399a9-1a5e-4f78-89db-277b8772edaf for [...]
+  act4   #2  payout_sent         Transfer b1d3549a-01e3-4131-ac79-4631eddd3a25 for EUR [...]
+  act4   #3  beneficiary_created Created beneficiary 5e01e2bd-786e-4dcc-9138-98f534457f94 for [...]
+  act4   #3  payout_sent         Transfer b46a9ede-f404-4117-8d5f-7dbe8e606ad2 for USD [...]
+  act4   #1  approval_granted    [approver:dana.controller] Dana Reyes (Finance Controller) [...]
+  act4   #5  approval_granted    [approver:dana.controller] Dana Reyes (Finance Controller) [...]
+  act4   #1  beneficiary_created Created beneficiary cefef7cb-5982-4496-ad47-76a3c81ad2f9 for [...]
+  act4   #1  payout_sent         Transfer 9a9028bf-6375-4c16-9b47-470e5e00a89b for USD [...]
+  act4   #5  beneficiary_created Created beneficiary cfc83972-e3fa-44a9-adf2-d93260bcd56d for [...]
+  act4   #5  payout_sent         Transfer e344ed40-e79d-46b5-b37a-f40a86a84d81 for USD [...]
+  act4   #2  payout_status       Transfer b1d3549a-01e3-4131-ac79-4631eddd3a25: PROCESSING → SENT.
+  act4   #2  payout_status       Transfer b1d3549a-01e3-4131-ac79-4631eddd3a25: SENT → PAID.
+  act4   #2  state               Transfer b1d3549a-01e3-4131-ac79-4631eddd3a25 reached PAID.
+  act4   #3  payout_status       Transfer b46a9ede-f404-4117-8d5f-7dbe8e606ad2: PROCESSING → SENT.
+  act4   #3  payout_status       Transfer b46a9ede-f404-4117-8d5f-7dbe8e606ad2: SENT → PAID.
+  act4   #3  state               Transfer b46a9ede-f404-4117-8d5f-7dbe8e606ad2 reached PAID.
+  act4   #1  payout_status       Transfer 9a9028bf-6375-4c16-9b47-470e5e00a89b: PROCESSING → SENT.
+  act4   #1  payout_status       Transfer 9a9028bf-6375-4c16-9b47-470e5e00a89b: SENT → PAID.
+  act4   #1  state               Transfer 9a9028bf-6375-4c16-9b47-470e5e00a89b reached PAID.
+  act4   #5  payout_status       Transfer e344ed40-e79d-46b5-b37a-f40a86a84d81: PROCESSING → SENT.
+  act4   #5  payout_status       Transfer e344ed40-e79d-46b5-b37a-f40a86a84d81: SENT → PAID.
+  act4   #5  state               Transfer e344ed40-e79d-46b5-b37a-f40a86a84d81 reached PAID.
   act4       reserve_confirmed   USD 15,258.56 uncommitted vs floor 10,000.00: intact.
 
 Audit database
-    state/mock/20261023T100031Z-befcf3.db  ·  54 entries  ·  chain hmac-sha256  ·  VERIFIED
-    head f1263e5172d5b708…  (append-only: triggers refuse UPDATE/DELETE; re-check with: python manage.py verify-audit)
+    state/mock/20261026T161947Z-363575.db  ·  136 entries  ·  chain hmac-sha256  ·  VERIFIED
+    head 89bd56232c5e516e…  (append-only: triggers refuse UPDATE/DELETE; re-check with: python manage.py verify-audit)
 
-$ python3 manage.py --db state/mock/20261023T100031Z-befcf3.db verify-audit
-database   state/mock/20261023T100031Z-befcf3.db
-chain      hmac-sha256  ·  54 entries  ·  head f1263e5172d5b708d6257730bcede92ca386d245d68174f0b119c5085011c1e6
+$ python3 manage.py --db state/mock/20261026T161947Z-363575.db verify-audit
+database   state/mock/20261026T161947Z-363575.db
+chain      hmac-sha256  ·  136 entries  ·  head 89bd56232c5e516ea5f39d59bd667e728fa818bf02106886724012aac03cfbfd
 result     OK: integrity, protective triggers, hash chain, approval digests
+exit=0
 
-$ python3 manage.py --db state/mock/20261023T100031Z-befcf3.db list-payouts
+$ python3 manage.py --db state/mock/20261026T161947Z-363575.db list-payouts
 error: --by <approver id> is required: reading or copying ledger data is authenticated and audited
-exit=2 (reading the ledger is an audited action: --by is required)
+exit=2
 
-$ python3 manage.py --db state/mock/20261023T100031Z-befcf3.db list-payouts --by dana.controller
-e176367c-dbf0-4d7a-8d17-d8731dc3e0cc  paid       #2  EUR     12000.00  ref MF-2026-0419     cycle 20261023T100031Z-befcf3  transfer 94df0752-51d7-4fe7-9dac-60eff12c6cbb  
+$ python3 manage.py --db state/mock/20261026T161947Z-363575.db list-payouts --by dana.controller
+d3568e37-9ec1-4c45-af6d-5c6caf1ca695  paid       #2  EUR     12000.00  ref MF-2026-0419     cycle 20261026T161947Z-363575  transfer b1d3549a-01e3-4131-ac79-4631eddd3a25  
+00877c8b-c7dc-4940-8b3e-d67f0b308de2  paid       #3  USD      1200.00  ref SW-ANNUAL-77     cycle 20261026T161947Z-363575  transfer b46a9ede-f404-4117-8d5f-7dbe8e606ad2  
+d3c0ae63-a9ff-478b-9a13-831300aecb3d  paid       #1  USD      8500.00  ref PFL-88213        cycle 20261026T161947Z-363575  transfer 9a9028bf-6375-4c16-9b47-470e5e00a89b  
+0190d089-61b6-450f-8576-70da7792b42a  paid       #5  USD      6000.00  ref RENT-NOV         cycle 20261026T161947Z-363575  transfer e344ed40-e79d-46b5-b37a-f40a86a84d81  
 exit=0

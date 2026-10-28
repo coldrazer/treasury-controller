@@ -175,8 +175,9 @@ class AirwallexClient:
 
     def login(self) -> None:
         for attempt in range(self.max_retries + 1):
+            # Airwallex answers 411 to a bodyless login POST; an empty JSON body is required.
             status, payload = self._send("POST", "/authentication/login", headers={
-                "x-client-id": self._client_id, "x-api-key": self._api_key})
+                "x-client-id": self._client_id, "x-api-key": self._api_key}, body={})
             if (status == 429 or status >= 500) and attempt < self.max_retries:
                 self._backoff(attempt + 1)
                 continue
@@ -343,10 +344,23 @@ class AirwallexClient:
         return items[0] if items else None
 
     def list_transfers(self, **filters) -> list[dict]:
-        """Recent transfers (Airwallex returns the last 30 days by default), filtered server-side."""
-        payload = self.request("GET", "/transfers", params=filters)
-        items = list((payload or {}).get("items", []))
-        return [i for i in items if all(i.get(k) == v for k, v in filters.items() if v is not None)]
+        """All transfers matching the filters, across every page. Airwallex pages list
+        results; reading only the first page would miss a prior payment for an invoice
+        once the account holds more than a page of transfers, and the prior-payment
+        check is what stops a duplicate payout. The page loop is bounded: a server
+        that always claims another page is a fault, not a reason to loop forever."""
+        items: list[dict] = []
+        page = 0
+        while page < 50:
+            payload = self.request("GET", "/transfers",
+                                   params={**filters, "page_num": page, "page_size": 100})
+            batch = list((payload or {}).get("items", []))
+            items.extend(i for i in batch
+                         if all(i.get(k) == v for k, v in filters.items() if v is not None))
+            if not (payload or {}).get("has_more") or not batch:
+                break
+            page += 1
+        return items
 
     def get_transfer(self, transfer_id: str) -> dict:
         return self.request("GET", f"/transfers/{urllib.parse.quote(transfer_id)}")

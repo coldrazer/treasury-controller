@@ -98,8 +98,10 @@ ALLOWED_TRANSITIONS: dict[State, frozenset[State]] = {
                                 State.AWAITING_APPROVAL, State.DEFERRED}),
     State.FX_PLANNED: frozenset({State.AWAITING_APPROVAL, State.CONVERTED, State.DEFERRED,
                                  State.ESCALATED}),
-    State.AWAITING_APPROVAL: frozenset({State.CONVERTED, State.ESCALATED}),
-    State.FUNDED: frozenset({State.PAID, State.ESCALATED}),  # failed payout returns to a human
+    State.AWAITING_APPROVAL: frozenset({State.CONVERTED, State.ESCALATED, State.PAID}),
+    # FUNDED -> AWAITING_APPROVAL is the payout-cap gate: a funded bill above the
+    # autonomous cap waits on a human card instead of paying, then settles to PAID.
+    State.FUNDED: frozenset({State.PAID, State.ESCALATED, State.AWAITING_APPROVAL}),
     State.CONVERTED: frozenset({State.PAID, State.ESCALATED}),  # failed payout goes to a human
     State.PAID: frozenset(),
 }

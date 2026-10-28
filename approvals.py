@@ -23,6 +23,19 @@ from typing import Callable, Iterable
 from models import ZERO, q2
 
 # Which role may decide which kind of approval (least privilege).
+def _same_person(requested_by: str, approver_id: str) -> bool:
+    """Segregation of duties must survive the operator name being unauthenticated.
+    Approver ids in this system read firstname.role, while the operator is an OS user
+    name, so 'sam' and 'sam.treasury' are one person even though the strings differ.
+    Match on the local part (before the first dot) and fail closed: two people who
+    share a first name cannot decide each other's cards, which is the safe direction
+    for a treasury control."""
+    if not requested_by or not approver_id:
+        return False
+    a, b = requested_by.strip().casefold(), approver_id.strip().casefold()
+    return a == b or a.split(".")[0] == b.split(".")[0]
+
+
 ROLE_FOR_KIND = {
     "FX_CONVERSION": frozenset({"treasury_approver", "finance_controller"}),
     "POLICY_EXCEPTION": frozenset({"finance_controller"}),
@@ -231,8 +244,10 @@ class ApprovalBook:
         self._check_live(req)
         if not approver_id:
             raise ApprovalError("approver identity is required")
-        if approver_id == req.requested_by:
-            raise ApprovalError("segregation of duties: the requester cannot approve their own request")
+        if _same_person(req.requested_by, approver_id):
+            raise ApprovalError("segregation of duties: the requester cannot approve their own request"
+                                + ("" if approver_id == req.requested_by
+                                   else f" ({approver_id} matches requester {req.requested_by})"))
         if not ROLE_FOR_KIND[req.kind] & frozenset(approver_roles):
             raise ApprovalError(f"{approver_id} lacks a role that may approve {req.kind} "
                                 f"(needs one of {sorted(ROLE_FOR_KIND[req.kind])})")
@@ -248,8 +263,10 @@ class ApprovalBook:
         req = self.get(approval_id)
         if req.status is not ApprovalStatus.PENDING:
             raise ApprovalError(f"approval {req.id} is {req.status.value}, not pending")
-        if approver_id == req.requested_by:
-            raise ApprovalError("segregation of duties: the requester cannot decide their own request")
+        if _same_person(req.requested_by, approver_id):
+            raise ApprovalError("segregation of duties: the requester cannot decide their own request"
+                                + ("" if approver_id == req.requested_by
+                                   else f" ({approver_id} matches requester {req.requested_by})"))
         if not ROLE_FOR_KIND[req.kind] & frozenset(approver_roles):
             raise ApprovalError(f"{approver_id} lacks a role that may decide {req.kind}")
         req.status = ApprovalStatus.REJECTED

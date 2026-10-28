@@ -66,6 +66,9 @@ class Settings:
     openai_base_url: str = "https://api.openai.com/v1"
     state_dir: Path = PROJECT_DIR / "state"
     operator: str = "operator"                 # who runs the agent (requests approvals; cannot approve them)
+    operator_approver_id: str | None = None    # TREASURY_OPERATOR_APPROVER_ID: the operator's approver
+                                               # id, when known; cards then name that id as requester, so
+                                               # segregation of duties compares authenticated-style ids
     audit_key: str | None = field(default=None, repr=False)   # TREASURY_AUDIT_KEY (hex/base64, >= 32 bytes)
     screening_list: Path | None = PROJECT_DIR / "fixtures" / "screening_list.json"
     approver_id: str | None = None             # only for unattended --yes runs against the live sandbox
@@ -123,8 +126,20 @@ def require_https(url: str, name: str) -> str:
     raise ConfigError(f"{name} must be an https URL (got {url!r})")
 
 
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
 def validate_base_url(url: str, env: Mapping[str, str]) -> str:
     url = require_https(url, "AWX_BASE_URL")
+    # Parsers disagree on where the host ends when a URL carries a backslash or
+    # userinfo: urlparse reads the host after '@', while other parsers dial the
+    # whole string, so "https://evil.example\\@api.sandbox.airwallex.com" validated
+    # as the sandbox while credentials could travel elsewhere. Reject both outright.
+    if "\\" in url:
+        raise ConfigError("AWX_BASE_URL must not contain backslashes")
+    parsed = urlparse(url)
+    if parsed.username is not None or parsed.password is not None:
+        raise ConfigError("AWX_BASE_URL must not contain userinfo (a username before '@')")
     host = host_of(url)
     if host == PRODUCTION_HOST and env.get("TREASURY_ALLOW_PRODUCTION") != "1":
         raise ConfigError(
@@ -132,7 +147,10 @@ def validate_base_url(url: str, env: Mapping[str, str]) -> str:
             "set TREASURY_ALLOW_PRODUCTION=1 only if you really mean it."
         )
     named = host_of("https://" + (env.get("TREASURY_ALLOW_HOST") or ""))
-    if host not in KNOWN_HOSTS and host != named:
+    # Loopback is no longer implicitly trusted: plain http to this machine is fine for
+    # the offline mock (which never goes through this function), but live credentials
+    # must not ride it without the operator naming the host explicitly.
+    if host not in (KNOWN_HOSTS - LOOPBACK_HOSTS) and host != named:
         raise ConfigError(
             f"AWX_BASE_URL points at {host!r}, which is not a known Airwallex host. The client id and API "
             "key in this environment would be sent there. Point AWX_BASE_URL at the sandbox, or set "
@@ -169,6 +187,7 @@ def load_settings(env: Mapping[str, str] | None = None, *, use_dotenv: bool = Tr
         openai_base_url=require_https(env.get("OPENAI_BASE_URL") or "https://api.openai.com/v1", "OPENAI_BASE_URL"),
         state_dir=Path(env.get("TREASURY_STATE_DIR") or PROJECT_DIR / "state"),
         operator=(env.get("TREASURY_OPERATOR") or _os_user()).strip().lower(),
+        operator_approver_id=(env.get("TREASURY_OPERATOR_APPROVER_ID") or None),
         audit_key=env.get("TREASURY_AUDIT_KEY") or None,
         screening_list=_screening_path(env.get("TREASURY_SCREENING_LIST")),
         approver_id=env.get("TREASURY_APPROVER_ID") or None,

@@ -384,7 +384,7 @@ def test_new_payee_needs_approval_and_is_pinned_by_the_approver(make_agent, scen
     rec = agent.records[2]
     assert rec.state is State.AWAITING_APPROVAL and any(n.startswith("R8") for n in rec.decision.notes)
     req = agent.approvals.get(rec.approval_id)
-    assert req.destination.startswith("IBAN ****3000")
+    assert req.destination == "IBAN DE89••3000 · Commerzbank · BIC COBADEFFXXX · EUR"
     approve(agent, req)
     [res] = agent.execute()
     assert res.status == "in_flight" and len(mock.transfers) == 1
@@ -594,7 +594,10 @@ def test_live_path_end_to_end_and_rerun_is_blocked(mock, tmp_path, monkeypatch, 
     env = {"AWX_BASE_URL": mock.base_url, "AWX_CLIENT_ID": MOCK_CLIENT_ID, "AWX_API_KEY": MOCK_API_KEY,
            "TREASURY_STATE_DIR": str(tmp_path), "TREASURY_AUDIT_KEY": key_hex, "LLM_PROVIDER": "rules",
            "TREASURY_OPERATOR": "ops.runner", "TREASURY_APPROVER_ID": "sam.treasury",
-           "TREASURY_APPROVER_PIN": APPROVERS["sam.treasury"][2]}
+           "TREASURY_APPROVER_PIN": APPROVERS["sam.treasury"][2],
+           # P4-10: loopback is no longer implicitly trusted for credentials, so the
+           # test mock names its host explicitly, as a real loopback deployment must.
+           "TREASURY_ALLOW_HOST": "127.0.0.1"}
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     class FastSimulator(demo.SandboxSimulator):
@@ -681,7 +684,8 @@ def test_manage_cli_enforces_roles_and_sod(tmp_path, monkeypatch, capsys):
                         "--reason", "call-back done"]) == 2                     # not a finance controller
     monkeypatch.setenv("TREASURY_ADMIN_PIN", "release-funds-7")
     assert manage.main(["pin-payee", "--by", "dana.controller", "--obligation", "2",
-                        "--reason", "IBAN confirmed by call-back"]) == 0
+                        "--reason", "IBAN confirmed by call-back",
+                        "--confirm-account", "DE89370400440532013000"]) == 0
     anchors = tmp_path / "anchors.jsonl"
     assert manage.main(["anchor", "--append", str(anchors)]) == 0
     assert manage.main(["verify-audit", "--anchors", str(anchors)]) == 0

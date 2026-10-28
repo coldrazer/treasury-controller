@@ -29,8 +29,22 @@ LEGAL_SUFFIXES = {"gmbh", "ltd", "limited", "llc", "inc", "incorporated", "co", 
 MIN_CONTAINMENT_TOKENS = 2
 
 
+# Targeted Unicode TR39 skeleton fold: Cyrillic and Greek letters that render identically
+# to Latin ones. Without it, dropping non-ASCII deletes the letter instead of reading it,
+# so "Blаckwater" (Cyrillic а) screens clear while "Blackwater" hits. Applied after
+# casefold, so only the lowercase forms are needed; anything still non-ASCII after the
+# fold (genuinely foreign script) is dropped as before.
+_CONFUSABLES = str.maketrans({
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y", "ј": "j", "ѕ": "s",
+    "і": "i", "ї": "i", "һ": "h", "ԁ": "d", "ɡ": "g", "ᴡ": "w",
+    "ο": "o", "ν": "v", "ρ": "p", "τ": "t", "χ": "x", "υ": "u", "ι": "i", "κ": "k", "α": "a",
+    "β": "b", "ε": "e", "η": "n", "μ": "u", "π": "n", "ω": "w", "ζ": "z",
+})
+
+
 def normalise(name: str) -> frozenset[str]:
-    text = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("ascii").casefold()
+    text = unicodedata.normalize("NFKD", str(name)).casefold().translate(_CONFUSABLES)
+    text = text.encode("ascii", "ignore").decode("ascii")
     text = text.replace("&", " and ")
     tokens = re.findall(r"[a-z0-9]+", text)
     return frozenset(t for t in tokens if t not in LEGAL_SUFFIXES)

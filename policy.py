@@ -64,7 +64,7 @@ class MissingRateError(PolicyError):
 # ---------------------------------------------------------------------------
 # Building blocks
 # ---------------------------------------------------------------------------
-def autonomous_fx_limit(confidence) -> Decimal:
+def _tier_limit(confidence) -> Decimal:
     c = to_decimal(confidence)
     if not Decimal(0) <= c <= Decimal(1):
         raise PolicyError(f"confidence must be within [0, 1], got {c}")
@@ -74,10 +74,27 @@ def autonomous_fx_limit(confidence) -> Decimal:
     return ZERO  # unreachable while the last tier starts at 0
 
 
+def autonomous_fx_limit(confidence) -> Decimal:
+    return _tier_limit(confidence)
+
+
+def autonomous_payout_limit(confidence) -> Decimal:
+    """Same tiers as the FX limit, separate pool: what the agent may pay out of cash
+    on its own in a cycle. Funded bills above the cap need a human card, just like a
+    conversion above the FX limit does; approved payouts do not consume the cap."""
+    return _tier_limit(confidence)
+
+
 def requires_fx_approval(sell_amount_usd, confidence, already_autonomous=ZERO) -> bool:
     """The limit caps the CUMULATIVE autonomous conversion in a cycle, so splitting one
     conversion into several smaller ones cannot get around it."""
     return q2(already_autonomous) + q2(sell_amount_usd) > autonomous_fx_limit(confidence)
+
+
+def requires_payout_approval(amount_usd, confidence, already_paid=ZERO) -> bool:
+    """Same cumulative shape for funded payouts: splitting one bill across cycles
+    cannot get around the cap, and neither can paying many small bills."""
+    return q2(already_paid) + q2(amount_usd) > autonomous_payout_limit(confidence)
 
 
 def policy_fingerprint(policy: PolicyConfig) -> str:

@@ -8,17 +8,20 @@ unclear is reported as ``unclear`` — which ``forecast.py`` treats conservative
 No threshold, limit or balance ever appears in the prompt.
 
 An email can only lower forecast confidence, and the reader cannot decline to
-lower it: ``guarded_stance`` is what makes that true. The ``unrelated`` stance is
-the only one that leaves confidence and the autonomy limit untouched, so it is
-the label an attacker would want, and it is granted only when code can verify
-from the text that the forecast invoice is absent and no payment timing is
-described. Reader claims about a different invoice are checked against the text.
+lower it: ``guarded_stance`` is what makes that true. ``unrelated`` and a
+verified ``confirm`` leave confidence and the autonomy limit untouched, so both
+are labels an attacker would want. ``unrelated`` is granted only when code can
+verify from the text that the forecast invoice is absent and no payment timing
+is described, and ``confirm`` is kept only when code finds no delay, dispute or
+later-date language. Reader claims about a different invoice are checked
+against the text.
 """
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta, timezone
 from typing import Mapping, Protocol
 
 from llm import LLMClient, LLMError
@@ -132,16 +135,52 @@ def _code_view(text: str, context: Mapping) -> dict:
             "other": other, "timing": timing}
 
 
-def guarded_stance(text: str, context: Mapping, stance: str) -> tuple[str, str]:
+_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+           "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+
+
+def _parse_stated_date(phrase: str, now: datetime) -> date | None:
+    """A date phrase from an email: an ISO date means itself, a bare month/day means
+    its next occurrence. A release date is only meaningful against the due date, so an
+    unparseable phrase is no evidence either way."""
+    phrase = phrase.strip()
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})$", phrase)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    m = re.match(r"([A-Za-z]+)\.?\s+(\d{1,2})(?:,\s*(\d{4}))?$", phrase)
+    if not m:
+        return None
+    month = _MONTHS.get(m.group(1).lower()[:3])
+    if month is None:
+        return None
+    try:
+        stated = date(int(m.group(3)) if m.group(3) else now.year, month, int(m.group(2)))
+    except ValueError:
+        return None
+    if m.group(3) is None and stated < now.date():
+        try:
+            stated = date(now.year + 1, month, int(m.group(2)))
+        except ValueError:
+            return None
+    return stated
+
+
+def guarded_stance(text: str, context: Mapping, stance: str,
+                   now: datetime | None = None) -> tuple[str, str]:
     """Code, never the reader, decides which stances are admissible.
 
-    ``unrelated`` is the stance that leaves confidence and therefore the autonomy limit
-    untouched, so it is the label an attacker wants; and a delay attributed to some other
-    invoice is worth nothing to us but is exactly what an attacker can claim. Both are
-    resolved here: ``unrelated`` survives only when code verifies the forecast invoice
-    appears nowhere and no payment timing is described, and timing language that code cannot
-    tie to the forecast invoice degrades to ``unclear``, which costs the agent authority.
+    ``unrelated`` and ``confirm`` are the stances that leave confidence and therefore
+    the autonomy limit untouched, so both are labels an attacker wants. ``unrelated``
+    survives only when code verifies the forecast invoice appears nowhere and no payment
+    timing is described, and timing language that code cannot tie to the forecast invoice
+    degrades to ``unclear``, which costs the agent authority. ``confirm`` survives only
+    when code finds no delay, dispute or later-date language: a stated payment date past
+    the forecast due date is a delay in substance, whatever the reader called it.
     """
+    now = now or datetime.now(timezone.utc)
     view = _code_view(text, context)
     if stance == "unrelated":
         if view["mentions"]:
@@ -152,6 +191,21 @@ def guarded_stance(text: str, context: Mapping, stance: str) -> tuple[str, str]:
             return "unclear", (f"email describes payment timing without naming {view['expected']};"
                                " recorded as unclear")
         return "unrelated", ""
+    if stance == "confirm":
+        if view["timing"] == "dispute":
+            return "dispute", ("email describes a dispute, so it is not a confirmation"
+                               " (recorded as dispute)")
+        if view["timing"] == "delay":
+            return "delay", ("email describes a delay, so it is not a confirmation"
+                             " (recorded as delay)")
+        date_match = _DATE_PHRASE.search(text)
+        due_hours = context.get("due_in_hours")
+        if date_match and isinstance(due_hours, (int, float)):
+            stated = _parse_stated_date(date_match.group(1), now)
+            if stated is not None and stated > (now + timedelta(hours=due_hours)).date():
+                return "delay", (f"email states payment on {date_match.group(1)}, after the "
+                                 f"forecast due date (recorded as delay)")
+        return "confirm", ""
     if stance in {"delay", "dispute"} and not view["mentions"] and view["other"]:
         return "unclear", (f"email ties timing to {view['other'][0]}, not to {view['expected']};"
                            " recorded as unclear rather than a confirmed delay")

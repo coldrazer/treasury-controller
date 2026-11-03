@@ -1,37 +1,96 @@
-# Adaptive Treasury Controller
+<p align="center">
+  <a href="https://apexstudiollc.com/treasury/"><img src="docs/assets/banner.png" alt="Treasury Controller: an agent that triages a multi-currency cash shortfall. Policy lives in code; judgment lives in the model." width="100%"></a>
+</p>
 
-Track 1 build for the Airwallex agentic-banking hackathon (Team Apex Studio).
+<p align="center">
+  <a href="https://apexstudiollc.com/treasury/"><b>Website</b></a> ·
+  <a href="https://98-81-148-190.sslip.io/"><b>Live demo</b></a> ·
+  <a href="https://youtu.be/Fx6LF039KRQ"><b>Video walkthrough</b></a> ·
+  <a href="#quick-start"><b>Quick start</b></a> ·
+  <a href="#security-and-compliance"><b>Security</b></a>
+</p>
 
-An agent that triages a cash shortfall for a small business. Five obligations fall due across USD,
-EUR and GBP within 72 hours; cash above a USD 10,000 reserve floor covers about 60% of them. The agent
-funds, converts, defers and escalates — each for a different reason — then adapts when a customer
-email undermines its receipt forecast and when a deposit lands mid-cycle. It executes one FX
-conversion and one supplier transfer over REST and confirms the reserve against reconciled balances.
+<p align="center">
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white">
+  <img alt="Runtime: standard library only" src="https://img.shields.io/badge/runtime-stdlib%20only-34f5c5">
+  <img alt="Tests: 287 passing" src="https://img.shields.io/badge/tests-287%20passing-2ea44f">
+  <img alt="Audit log: HMAC-SHA256 chained" src="https://img.shields.io/badge/audit-HMAC--SHA256%20chained-8b5cf6">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+</p>
 
-**Policy lives in code; judgment lives in the model.** The model reads the customer email and explains
-exceptions. Code owns every amount, limit, reserve, validation, duplicate check and state transition.
+---
 
-## Run it
+**Treasury Controller** is an agent that triages a cash shortfall for a small business. Five obligations
+fall due across USD, EUR and GBP within 72 hours, and cash above a USD 10,000 reserve floor covers only
+about 60% of them. The agent **funds, converts, defers and escalates**, each for a different stated
+reason. It then adapts when a customer email undermines its receipt forecast and when a deposit lands
+mid-cycle. It executes one FX conversion and one supplier transfer over the Airwallex REST API and
+confirms the reserve against reconciled balances.
+
+> **Policy lives in code; judgment lives in the model.** The model reads the customer email and explains
+> exceptions. Code owns every amount, limit, reserve, validation, duplicate check and state transition.
+
+Built by [Apex Studio](https://apexstudiollc.com/treasury/) for Track 1 of the Airwallex Agentic Banking Hackathon.
+
+## Watch the demo
+
+<p align="center">
+  <a href="https://youtu.be/Fx6LF039KRQ">
+    <img src="docs/assets/demo-video.jpg" alt="Watch the Treasury Controller live demo on YouTube" width="85%">
+  </a>
+  <br>
+  <sub>▶ <a href="https://youtu.be/Fx6LF039KRQ">Treasury Controller live demo</a>: all four acts, end to end</sub>
+</p>
+
+### Try it in your browser
+
+The [live dashboard](https://98-81-148-190.sslip.io/) runs the same agent against the offline mock
+sandbox, with fake money only. Sign in with any demo approver:
+
+| Approver id | PIN | Role | Signs |
+|---|---|---|---|
+| `sam.treasury` | `fx-approve-42` | Treasury approver | FX conversions |
+| `dana.controller` | `release-funds-7` | Finance controller | Policy exceptions and failed payouts |
+| `casey.compliance` | `screen-names-11` | Compliance officer | Screening reviews |
+
+Run **Act 1 · Triage**, then the email shock and the deposit, then sign the cards and execute.
+
+## Highlights
+
+| | |
+|---|---|
+| 🧮 **Four decisions, four reasons** | Fund what stops operations, convert only the minimum FX, defer the cheapest bill, escalate what breaches policy. Each decision carries its rule code. |
+| 📉 **Confidence-gated autonomy** | Bank history plus invoice status set forecast confidence, which sets the autonomous FX limit. An email can only *lower* it, so a prompt injection can never widen the agent's authority. |
+| 🧱 **Reserve floor as a hard line** | Planning never draws below it; execution re-checks it against the real quote, net of every commitment. |
+| ✍️ **Digest-bound approvals** | Each approval card is a SHA-256 digest of the action, amount, counterparty, destination, ceiling, evidence and expiry. Cards are single use and are superseded when the evidence changes. |
+| 🔗 **Tamper-evident audit log** | Append-only and HMAC-chained, with triggers that refuse UPDATE and DELETE. `manage.py verify-audit` catches a rewritten amount. |
+| 🔁 **Never pays twice** | A request_id is persisted before every write, ambiguous failures are looked up rather than retried blindly, and a unique index enforces one live payout per invoice. |
+
+## Quick start
 
 Python 3.11+, standard library only at runtime.
 
 ```bash
-python3 demo.py                 # offline: a local mock of the Airwallex sandbox, no credentials
-python3 demo.py --yes           # the demo approver signs the bound card (non-interactive)
-python3 demo.py --yes --pace 1.2   # slower beats for screen recording
+git clone https://github.com/coldrazer/treasury-controller
+cd treasury-controller
 
+python3 demo.py                    # offline: a local mock of the Airwallex sandbox, no credentials
+python3 demo.py --yes              # the demo approver signs the bound card (non-interactive)
+python3 demo.py --yes --pace 1.2   # slower beats for screen recording
+python3 webui.py --mode mock       # the dashboard on http://127.0.0.1:8080
+```
+
+Tests and static checks (dev-only dependencies):
+
+```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest      # rules, client, approvals, ledger, four acts, failure paths, controls
+.venv/bin/python -m pytest      # rules, client, approvals, ledger, four acts, failure paths, controls, public demo
 .venv/bin/python -m pyflakes *.py tests/*.py
 .venv/bin/python -m bandit -q -r . -x ./tests,./.venv,./__pycache__
 ```
 
-`demo.py` and the runtime need nothing but the standard library; the three checks above are dev-only.
-
 Without `--yes` the demo stops at the approval card and asks for an approver id, passcode and the
-card's code. Mock runs enrol three demo approvers into a throwaway database (`sam.treasury`
-fx-approve-42, `dana.controller` release-funds-7, `casey.compliance` screen-names-11 — fake money
-only; the same codes the dashboard lists).
+card's code. Mock runs enrol the three demo approvers above into a throwaway database (fake money only).
 
 ### Against the real Airwallex sandbox
 
@@ -76,30 +135,30 @@ decisions are identical either way, because the model never makes them.
 
 | # | Obligation | Amount | Due | Act 1 decision | Rule |
 |---|---|---|---|---|---|
-| 1 | Shipping invoice | USD 8,500 | 24h | **Fund** — non-payment stops operations | R1 |
-| 2 | Supplier (Germany) | EUR 12,000 | 48h | **Convert minimum** — buy EUR 11,512.85 = 12,000 + 12.85 SWIFT fee − 500 held (≈ USD 12,491.45) | R3 |
-| 3 | Software licenses | USD 1,200 | 72h | **Defer** — plan is USD 691.45 short; zero penalty makes it the cheapest deferral | R4 |
-| 4 | Contractor payout | GBP 15,000 | 48h | **Escalate** — ≈ USD 19,050 breaches the USD 15,000 single-payment threshold; never split to fit | R5 |
-| 5 | Office rent | USD 6,000 | 72h | **Fund** — fixed, non-negotiable | R2 |
+| 1 | Shipping invoice | USD 8,500 | 24h | **Fund**: non-payment stops operations | R1 |
+| 2 | Supplier (Germany) | EUR 12,000 | 48h | **Convert minimum**: buy EUR 11,512.85 = 12,000 + 12.85 SWIFT fee − 500 held (≈ USD 12,491.45) | R3 |
+| 3 | Software licenses | USD 1,200 | 72h | **Defer**: plan is USD 691.45 short; zero penalty makes it the cheapest deferral | R4 |
+| 4 | Contractor payout | GBP 15,000 | 48h | **Escalate**: ≈ USD 19,050 breaches the USD 15,000 single-payment threshold; never split to fit | R5 |
+| 5 | Office rent | USD 6,000 | 72h | **Fund**: fixed, non-negotiable | R2 |
 
-* **Act 1 — triage.** Opening USD 37,500 · EUR 500 · GBP 0. Needs ≈ USD 47,784; cash above the floor
+* **Act 1: triage.** Opening USD 37,500 · EUR 500 · GBP 0. Needs ≈ USD 47,784; cash above the floor
   ≈ USD 28,043 (59%). Forecast: Northwind Retail INV-2041 (USD 25,000, 48h); 5/6 past receipts on time
   and the invoice acknowledged, so bank and invoice data agree → confidence 0.92 → autonomous FX limit
   USD 15,000. The conversion is within it. Headroom left above the floor: USD 508.55.
-* **Act 2 — confidence drop.** Northwind emails that payment is delayed 2 weeks. The reader returns
+* **Act 2: confidence drop.** Northwind emails that payment is delayed 2 weeks. The reader returns
   `stance=delay, delay_days=14` with a verbatim evidence quote. Code: the delay pushes the receipt past
   the 72h window → confidence ×0.4 → 0.37 → limit USD 15,000 → 2,500. The *same* conversion is now
   above the limit, so it moves to `awaiting_approval` with a bound approval card.
-* **Act 3 — deposit.** `POST /simulation/deposit/create` for USD 25,000 (Bluefin Retail). The agent
+* **Act 3: deposit.** `POST /simulation/deposit/create` for USD 25,000 (Bluefin Retail). The agent
   re-reads balances, confirms the inflow, and recalculates only cash-constrained decisions: #3 deferred →
   funded; #4 stays escalated but its funding analysis changes from a USD 18,541.45 gap to USD 19,050
-  held pending approval — its old approval is superseded because its evidence changed. #1, #2, #5 are
+  held pending approval, and its old approval is superseded because its evidence changed. #1, #2, #5 are
   untouched.
-* **Act 4 — execution.** The approver types the card's code. One single-use quote (buy EUR 11,512.85
+* **Act 4: execution.** The approver types the card's code. One single-use quote (buy EUR 11,512.85
   for USD 12,491.44, no `x-api-version`), the conversion over REST, a schema-checked DE · EUR · SWIFT
   beneficiary, and a EUR 12,000 transfer (payer pays 12,012.85). SENT is treated as in flight; PAID is
   terminal.
-* **Close.** Final USD 34,308.56 · EUR 0.00 — exactly the minimum was converted. USD committed 19,050
+* **Close.** Final USD 34,308.56 · EUR 0.00, so exactly the minimum was converted. USD committed 19,050
   (held, #4) → USD 15,258.56 uncommitted ≥ the 10,000 floor. #1, #3 and #5 paid; #2 converted and paid;
   the contractor payout is still waiting on a human. Every action is in the audit log with its rule
   and reason.
@@ -125,9 +184,11 @@ airwallex_client.py  REST: auth, typed calls, Decimal JSON, retry rules, ambiguo
 simulation.py        every POST /simulation/* call behind one interface + scenario fixtures
 mock_sandbox.py      offline HTTP stand-in for the sandbox used by the demo and tests
 demo.py              the narrated four-act CLI demo
-webui.py             localhost dashboard over the same agent: every card is signed by a person, nothing auto-approves
+webui.py             dashboard over the same agent: every card is signed by a person, nothing auto-approves;
+                     optional public-demo mode gives each visitor a private sandbox
 smoke_live.py        build step 1: read-only credential check against the sandbox
 fixtures/            scenario.json (obligations, receipt, deposit, beneficiary), customer_email.txt
+deploy/              nginx site, proxy snippet and hardened systemd unit for the public dashboard
 ```
 
 ### State machine
@@ -241,6 +302,24 @@ The controls below are enforced by the code and covered by the test suite. In sh
   reuse, error codes, header rules). It is a test double; run `smoke_live.py` and `demo.py --live` to
   verify against the real sandbox, which this build has not yet been run against.
 
+## Running the dashboard publicly
+
+`webui.py` binds to loopback only. To share it, put it behind a TLS-terminating proxy and switch on
+the public settings (all off by default, so a local run is unchanged):
+
+| Setting | Effect |
+|---|---|
+| `TREASURY_PUBLIC_ORIGIN=https://your.host` | Trusts that Host, accepts state changes only from that exact origin, marks the session cookie `Secure` and sends HSTS. |
+| `TREASURY_PUBLIC_DEMO=1` | Each signed-in visitor gets a **private mock sandbox**. Demo PINs are checked before any store is touched, so strangers cannot lock the shared demo accounts, and one visitor's reset never touches another's demo. Sandboxes are deleted when the session ends. |
+| `TREASURY_MAX_DEMOS=12` | Caps concurrent sandboxes; the least recently used idle one is evicted first. |
+
+Ready-made configs live in [`deploy/`](deploy/): an nginx site with per-IP rate limits on sign-in and
+signing, an allow-list of routes, `server_tokens off` and a body-size cap
+([`nginx-treasury-demo.conf`](deploy/nginx-treasury-demo.conf) + [`treasury-proxy.conf`](deploy/treasury-proxy.conf)),
+and a sandboxed systemd unit ([`treasury-demo.service`](deploy/treasury-demo.service)).
+
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright 2026 Apex Studio LLC.
+MIT: see [LICENSE](LICENSE). Copyright 2026 [Apex Studio LLC](https://apexstudiollc.com/treasury/).
+
+<p align="center"><sub>Built by <a href="https://apexstudiollc.com/treasury/">Apex Studio</a> · <a href="https://youtu.be/Fx6LF039KRQ">Watch the demo</a> · <a href="https://98-81-148-190.sslip.io/">Try it live</a></sub></p>

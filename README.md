@@ -39,7 +39,7 @@ Built by [Apex Studio](https://apexstudiollc.com/treasury/) for Track 1 of the A
     <img src="docs/assets/demo-video.jpg" alt="Watch the Treasury Controller live demo on YouTube" width="85%">
   </a>
   <br>
-  <sub>▶ <a href="https://youtu.be/Fx6LF039KRQ">Treasury Controller live demo</a>: all four acts, end to end</sub>
+  <sub>▶ <a href="https://youtu.be/Fx6LF039KRQ">Treasury Controller live demo</a>: all four acts, end to end, recorded against the offline mock sandbox (fake money only)</sub>
 </p>
 
 ### Try it in your browser
@@ -119,6 +119,17 @@ python3 manage.py verify-audit           # integrity, triggers, hash chain, appr
   `TREASURY_AUDIT_KEY`. Mock runs get a fresh `state/mock/<cycle>.db` each time.
 * Without `pin-payee`, the first payment to the supplier's account needs a human approval of the
   destination (R8), so Act 1 already shows the conversion awaiting approval.
+
+### Live sandbox verification
+
+The build has also run once against the real Airwallex sandbox (Oct 27, 2026, live run 3),
+with the same decisions as the mock: fund shipping and rent, minimum conversion, defer licenses,
+escalate the contractor. The video and the dashboard above are still the offline mock.
+
+* FX conversion: `46996688-0a8b-426e-8f08-cf6e5d737784`, status SETTLED, sold USD 12,878.65 for
+  EUR 11,512.85 at rate 1.118633.
+* Supplier transfer: `9b1acf7f-1042-4d56-b0e6-9f1b48cc69c7`, EUR 12,000.00 plus EUR 13.49 fee,
+  status SCHEDULED.
 
 ### Optional model
 
@@ -299,8 +310,8 @@ The controls below are enforced by the code and covered by the test suite. In sh
 * **Screening uses a local list** (`fixtures/screening_list.json`, fictitious names). It is a hook for
   a real screening provider, not a sanctions programme.
 * **The mock** enforces the builder guide's documented behaviours (fees, single-use quotes, request_id
-  reuse, error codes, header rules). It is a test double; run `smoke_live.py` and `demo.py --live` to
-  verify against the real sandbox, which this build has not yet been run against.
+  reuse, error codes, header rules). It is a test double; see "Live sandbox verification" above for
+  the run against the real sandbox.
 
 ## Running the dashboard publicly
 

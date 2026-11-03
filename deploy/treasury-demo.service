@@ -1,0 +1,41 @@
+# /etc/systemd/system/treasury-demo.service
+# sudo systemctl daemon-reload && sudo systemctl enable --now treasury-demo
+[Unit]
+Description=Treasury Controller public dashboard demo (mock sandbox, fake money)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=treasury
+Group=treasury
+WorkingDirectory=/opt/treasury-controller
+Environment=TREASURY_PUBLIC_ORIGIN=https://demo.example.com
+Environment=TREASURY_PUBLIC_DEMO=1
+Environment=TREASURY_MAX_DEMOS=12
+Environment=LLM_PROVIDER=rules
+Environment=TREASURY_STATE_DIR=/var/lib/treasury-demo
+ExecStart=/usr/bin/python3 webui.py --mode mock --port 8080
+Restart=on-failure
+RestartSec=3
+
+# Sandboxing: the demo needs nothing but its own state directory and loopback.
+StateDirectory=treasury-demo
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

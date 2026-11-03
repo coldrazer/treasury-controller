@@ -16,6 +16,7 @@ PINs are seeded into a throwaway database and shown on the login screen for the 
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import secrets
@@ -48,6 +49,27 @@ SESSION_COOKIE = "treasury_session"
 IDLE_SECONDS = 15 * 60
 ABSOLUTE_SECONDS = 4 * 60 * 60
 MAX_BODY = 64 * 1024
+# Public exposure (behind a TLS-terminating proxy). Both default off, so a local run is unchanged.
+#   TREASURY_PUBLIC_ORIGIN=https://demo.example.com  the one origin browsers may post from; adds Secure + HSTS
+#   TREASURY_PUBLIC_DEMO=1    every signed-in visitor gets a private mock sandbox, demo PINs are checked
+#                             before the store, so strangers cannot lock the shared demo accounts
+#   TREASURY_MAX_DEMOS=12     concurrent private sandboxes; the oldest idle one is evicted first
+def _public_origin(raw: str) -> str:
+    raw = (raw or "").strip().rstrip("/").lower()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.path or parsed.query:
+        raise SystemExit(f"TREASURY_PUBLIC_ORIGIN must look like https://host[:port], got {raw!r}")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+PUBLIC_ORIGIN = _public_origin(os.environ.get("TREASURY_PUBLIC_ORIGIN", ""))
+PUBLIC_HOST = urlparse(PUBLIC_ORIGIN).netloc if PUBLIC_ORIGIN else ""
+SECURE_COOKIE = PUBLIC_ORIGIN.startswith("https://")
+PUBLIC_DEMO = os.environ.get("TREASURY_PUBLIC_DEMO", "") == "1"
+MAX_DEMOS = max(1, int(os.environ.get("TREASURY_MAX_DEMOS", "12") or 12))
+MAX_SESSIONS = 5000
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
        "connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'")
 
@@ -96,6 +118,7 @@ class WebSession:
         self.token = token
         self.csrf = csrf
         self.approver_id = approver_id
+        self.demo = None  # public demo mode: this visitor's own sandbox
         self.created = time.monotonic()
         self.last_seen = time.monotonic()
 
@@ -113,6 +136,12 @@ class Sessions:
         self._by_token: dict[str, WebSession] = {}
 
     def _issue(self, approver_id: str | None) -> WebSession:
+        if len(self._by_token) >= MAX_SESSIONS:
+            # A flood of cookie-less page loads must not grow memory without bound: evict the
+            # oldest anonymous sessions first (they hold nothing but a CSRF token).
+            anon = sorted((s for s in self._by_token.values() if not s.authenticated), key=lambda s: s.last_seen)
+            for old in anon[:max(1, len(anon) // 4)]:
+                self._by_token.pop(old.token, None)
         session = WebSession(secrets.token_hex(32), secrets.token_hex(32), approver_id)
         self._by_token[session.token] = session
         return session
@@ -132,20 +161,45 @@ class Sessions:
                 session.last_seen = time.monotonic()
             return session
 
-    def sign_in(self, old_token: str | None, approver_id: str) -> WebSession:
+    def sign_in(self, old_token: str | None, approver_id: str, demo=None) -> WebSession:
         with self._lock:
-            self._by_token.pop(old_token, None)
-            return self._issue(approver_id)
+            self._retire(self._by_token.pop(old_token, None))
+            session = self._issue(approver_id)
+            session.demo = demo
+            return session
 
     def drop(self, token: str | None) -> None:
         with self._lock:
-            self._by_token.pop(token, None)
+            self._retire(self._by_token.pop(token, None))
+
+    def live_demos(self) -> int:
+        with self._lock:
+            self._prune()
+            return sum(1 for s in self._by_token.values() if s.demo is not None)
+
+    def evict_oldest_demo(self) -> bool:
+        """Free one sandbox slot by closing the least recently used visitor's demo."""
+        with self._lock:
+            holders = sorted((s for s in self._by_token.values() if s.demo is not None), key=lambda s: s.last_seen)
+            if not holders or time.monotonic() - holders[0].last_seen < 120:
+                return False  # everyone is active; do not kick a visitor mid-demo
+            self._retire(self._by_token.pop(holders[0].token, None))
+            return True
+
+    @staticmethod
+    def _retire(session: WebSession | None) -> None:
+        if session is not None and session.demo is not None:
+            demo, session.demo = session.demo, None
+            try:
+                demo.close(purge=True)
+            except Exception:  # noqa: BLE001 - a sandbox that will not close must not wedge sign-out
+                traceback.print_exc()
 
     def _prune(self) -> None:
         now = time.monotonic()
         for token, session in list(self._by_token.items()):
             if now - session.last_seen > IDLE_SECONDS or now - session.created > ABSOLUTE_SECONDS:
-                self._by_token.pop(token, None)
+                self._retire(self._by_token.pop(token, None))
 
 
 # ---------------------------------------------------------------------------
@@ -200,12 +254,21 @@ class DemoSession:
         self.log = [{"t": time.time(), "kind": "system",
                      "msg": f"Session started · cycle {cycle} · mock sandbox online"}]
 
-    def close(self) -> None:
+    def close(self, purge: bool = False) -> None:
         with self.lock:
+            path = getattr(self.agent.store, "path", None)
             try:
                 self.agent.store.close()
             finally:
                 self.mock.stop()
+            if purge and path is not None:
+                # A visitor's throwaway sandbox leaves nothing on disk once it is closed.
+                from pathlib import Path
+                for leftover in Path(path).parent.glob(Path(path).name + "*"):
+                    try:
+                        leftover.unlink()
+                    except OSError:
+                        pass
 
     def reset(self):
         with self.lock:
@@ -354,6 +417,11 @@ class Handler(BaseHTTPRequestHandler):
                       "X-Content-Type-Options: nosniff", "Cache-Control: no-store"):
             name, _, val = value.partition(": ")
             self.send_header(name, val)
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        if SECURE_COOKIE:
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
         if cookie:
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
@@ -368,13 +436,16 @@ class Handler(BaseHTTPRequestHandler):
     def _cookie(self, token: str, *, clear=False) -> str:
         age = 0 if clear else IDLE_SECONDS
         return (f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={age}"
+                + ("; Secure" if SECURE_COOKIE else "")
                 + ("; Expires=Thu, 01 Jan 1970 00:00:00 GMT" if clear else ""))
 
     # -- guards ---------------------------------------------------------------
     def _trusted_host(self):
         hosts = self.headers.get_all("Host", [])
-        return len(hosts) == 1 and hosts[0].lower() in {
-            f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
+        allowed = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
+        if PUBLIC_HOST:
+            allowed.add(PUBLIC_HOST)  # the proxy must forward the browser's Host (proxy_set_header Host $host)
+        return len(hosts) == 1 and hosts[0].lower() in allowed
 
     def _session(self) -> WebSession | None:
         cookie = SimpleCookie(self.headers.get("Cookie") or "")
@@ -385,7 +456,16 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin is None:
             return True  # same-origin navigation sends no Origin; the Host check still applies
-        return origin == "http://" + self.headers.get("Host", "").lower()
+        host = self.headers.get("Host", "").lower()
+        if PUBLIC_HOST and host == PUBLIC_HOST:
+            return origin.lower() == PUBLIC_ORIGIN  # behind the proxy only the public origin may post
+        return origin == "http://" + host
+
+    def _demo(self, session: WebSession | None):
+        """The sandbox this request acts on: the visitor's own in public demo mode, else the shared one."""
+        if PUBLIC_DEMO:
+            return session.demo if session is not None else None
+        return self.server.session
 
     def _body(self) -> dict | None:
         try:
@@ -429,9 +509,9 @@ class Handler(BaseHTTPRequestHandler):
             session = self._session()
             if session is None:
                 session = self.server.sessions.anonymous()
-                self._html(PAGE.replace("__CSRF__", session.csrf), cookie=self._cookie(session.token))
+                self._html(_page().replace("__CSRF__", session.csrf), cookie=self._cookie(session.token))
                 return
-            self._html(PAGE.replace("__CSRF__", session.csrf))
+            self._html(_page().replace("__CSRF__", session.csrf))
             return
         if path == "/static/app.js":
             self._send(APP_JS.encode(), "text/javascript; charset=utf-8")
@@ -443,7 +523,11 @@ class Handler(BaseHTTPRequestHandler):
             session = self._session()
             if not self._signed_in(session):
                 return
-            state = self.server.session.snapshot()
+            demo = self._demo(session)
+            if demo is None:
+                self._json({"ok": False, "error": "sign-in required"}, 401)
+                return
+            state = demo.snapshot()
             state["approver"] = session.approver_id
             self._json(state)
             return
@@ -461,7 +545,10 @@ class Handler(BaseHTTPRequestHandler):
         if session is None or not self._signed_in(session):
             return
         required_act = {"/api/act1": 0, "/api/act2": 1, "/api/act3": 2, "/api/act4": 3}
-        demo = self.server.session
+        demo = self._demo(session)
+        if demo is None:
+            self._json({"ok": False, "error": "sign-in required"}, 401)
+            return
         if path in required_act and demo.act != required_act[path]:
             self._json({"ok": False, "error": "act is out of sequence or already completed"}, 409)
             return
@@ -470,6 +557,9 @@ class Handler(BaseHTTPRequestHandler):
     def _login(self, session, body):
         approver_id = str(body.get("approver_id") or "")[:64]
         pin = str(body.get("pin") or "")[:64]
+        if PUBLIC_DEMO:
+            self._login_public(session, approver_id, pin)
+            return
         try:
             self.server.session.agent.store.authenticate(approver_id, pin)
         except (AuthError, StoreError) as exc:
@@ -481,6 +571,27 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": str(exc)}, 403)
             return
         fresh = self.server.sessions.sign_in(session.token, approver_id)
+        self._json({"ok": True, "approver": approver_id}, cookie=self._cookie(fresh.token))
+
+    def _login_public(self, session, approver_id, pin):
+        """Public demo: the published demo PINs are checked here, before any store is touched, so a
+        stranger's wrong guesses can never lock the accounts. A correct sign-in boots this visitor's
+        own sandbox and is then verified again by that sandbox's audit store, as in a local run."""
+        if not _demo_pin_ok(approver_id, pin):
+            self._json({"ok": False, "error": "approver id or PIN is incorrect"}, 403)
+            return
+        sessions = self.server.sessions
+        if sessions.live_demos() >= MAX_DEMOS and not sessions.evict_oldest_demo():
+            self._json({"ok": False, "error": "the demo is at capacity; please try again in a few minutes"}, 503)
+            return
+        demo = DemoSession()
+        try:
+            demo.agent.store.authenticate(approver_id, pin)
+        except (AuthError, StoreError) as exc:
+            demo.close(purge=True)
+            self._json({"ok": False, "error": str(exc)}, 403)
+            return
+        fresh = sessions.sign_in(session.token, approver_id, demo=demo)
         self._json({"ok": True, "approver": approver_id}, cookie=self._cookie(fresh.token))
 
     def _dispatch(self, path, body, demo, session):
@@ -504,6 +615,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": False, "error": "reset needs an explicit confirm"}, 400)
                     return
                 self.server.sessions.drop(session.token)
+                if PUBLIC_DEMO:
+                    # Closing the visitor's sandbox is the reset: signing in again boots a fresh one,
+                    # and nobody else's demo is touched.
+                    self._json({"ok": True}, cookie=self._cookie("x", clear=True))
+                    return
                 self._json(demo.reset(), cookie=self._cookie("x", clear=True))
             else:
                 self._json({"ok": False, "error": "not found"}, 404)
@@ -528,6 +644,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if session.approver_id != text["approver_id"]:
             self._json({"ok": False, "error": "the signed-in approver must sign this card themselves"}, 403)
+            return
+        if PUBLIC_DEMO and not _demo_pin_ok(text["approver_id"], text["pin"]):
+            self._json({"ok": False, "error": "approver id or PIN is incorrect"}, 403)
             return
         self._json(demo.sign(decision=decision, reason=text["reason"], **{
             f: text[f] for f in ("approval_id", "approver_id", "pin", "confirm_code")}))
@@ -915,6 +1034,34 @@ document.addEventListener("DOMContentLoaded",()=>{
 """
 
 
+def _demo_pin_ok(approver_id: str, pin: str) -> bool:
+    from demo import DEMO_APPROVERS
+    entry = DEMO_APPROVERS.get(approver_id)
+    expected = entry[2] if entry else secrets.token_hex(16)  # same work for unknown ids
+    return secrets.compare_digest(str(pin).encode(), expected.encode()) and entry is not None
+
+
+_PUBLIC_PAGE: str | None = None
+
+
+def _page() -> str:
+    """Public demo mode prints the demo accounts on the sign-in form: they guard fake money in a
+    sandbox that belongs to the visitor alone, so there is nothing for them to protect."""
+    global _PUBLIC_PAGE
+    if not PUBLIC_DEMO:
+        return PAGE
+    if _PUBLIC_PAGE is None:
+        from demo import DEMO_APPROVERS
+        rows = "".join(
+            f'<div><b>{html.escape(aid)}</b> {html.escape(roles[0])} · PIN <span class="mono">{html.escape(pin)}</span></div>'
+            for aid, (_name, roles, pin) in DEMO_APPROVERS.items())
+        start = PAGE.index('<div class="who">')
+        end = PAGE.index("</section>", start)
+        _PUBLIC_PAGE = (PAGE[:start] + '<div class="who">\n    <div>Public demo: you get your own private sandbox '
+                        'with fake money. Use any of these accounts:</div>\n    ' + rows + "\n  </div>\n" + PAGE[end:])
+    return _PUBLIC_PAGE
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", required=True, choices=(WEB_MODE,),
@@ -924,8 +1071,21 @@ def main(argv=None):
     if args.mode != WEB_MODE:
         ap.error("webui.py is mock-only; use demo.py --live or manage.py for live execution")
     srv = HTTPServer(("127.0.0.1", args.port), Handler)
-    srv.session = DemoSession()
+    srv.session = None if PUBLIC_DEMO else DemoSession()
     srv.sessions = Sessions()
+    if PUBLIC_ORIGIN:
+        print(f"Public origin {PUBLIC_ORIGIN} (Secure cookie: {SECURE_COOKIE}); keep this process on loopback "
+              "behind a TLS proxy that forwards Host.")
+    if PUBLIC_DEMO:
+        # Visitor sandboxes are throwaway: a hard stop (SIGTERM, crash) cannot close them, so clear
+        # any left behind before serving. The demo audit key is kept.
+        mock_dir = load_settings().state_dir / "mock"
+        for leftover in mock_dir.glob("*.db*") if mock_dir.is_dir() else ():
+            try:
+                leftover.unlink()
+            except OSError:
+                pass
+        print(f"Public demo mode: private sandbox per signed-in visitor (max {MAX_DEMOS}).")
     print(f"Treasury Controller UI → http://127.0.0.1:{args.port}  (mode: {args.mode}; offline demo only)")
     print("Every approval needs a named approver and their PIN; nothing is signed automatically.")
     try:
@@ -933,7 +1093,8 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     finally:
-        srv.session.close()
+        if srv.session is not None:
+            srv.session.close()
         srv.server_close()
 
 

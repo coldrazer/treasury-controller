@@ -11,7 +11,7 @@ the account for a doubling wait after each five failed tries) and types each car
 before the agent may move money. Standard library only.
 
 The demo identities below exist so the sandbox can be driven without a bank; their
-PINs are seeded into a throwaway database and are never rendered to a screen.
+PINs are seeded into a throwaway database and shown on the login screen for the mock demo.
 """
 from __future__ import annotations
 
@@ -676,10 +676,10 @@ PAGE = r"""<!DOCTYPE html>
     <div class="row"><button class="btn" id="btnLogin" type="submit">Sign in</button></div>
   </form>
   <div class="who">
-    <div><b>sam.treasury</b> treasury_approver · signs FX conversions</div>
-    <div><b>dana.controller</b> finance_controller · signs policy exceptions</div>
-    <div><b>casey.compliance</b> compliance_officer · signs screening reviews</div>
-    <div>The sandbox PINs are seeded by <span class="mono">demo.py</span>, not served to this page.</div>
+    <div>Demo sign in, mock sandbox only, fake money. Use any of these accounts:</div>
+    <div><b>sam.treasury</b> treasury_approver · signs FX conversions · PIN <span class="mono">fx-approve-42</span></div>
+    <div><b>dana.controller</b> finance_controller · signs policy exceptions · PIN <span class="mono">release-funds-7</span></div>
+    <div><b>casey.compliance</b> compliance_officer · signs screening reviews · PIN <span class="mono">screen-names-11</span></div>
   </div>
 </section>
 
